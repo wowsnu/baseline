@@ -1,10 +1,10 @@
-import labWide from '../../v3/public/img/lab_wide_establishing.png'
-import labBench from '../../v3/public/img/lab_student_at_bench.png'
-import labOts from '../../v3/public/img/lab_student_ots.png'
-import labWriting from '../../v3/public/img/lab_writing_erasing.png'
-import labFormula from '../../v3/public/img/lab_pattern_ecu.png'
-import labDiscovery from '../../v3/public/img/lab_discovery_cu.png'
-import labWindow from '../../v3/public/img/lab_window_reveal.png'
+import labWide from './assets/lab_wide_establishing.png'
+import labBench from './assets/lab_student_at_bench.png'
+import labOts from './assets/lab_student_ots.png'
+import labWriting from './assets/lab_writing_erasing.png'
+import labFormula from './assets/lab_pattern_ecu.png'
+import labDiscovery from './assets/lab_discovery_cu.png'
+import labWindow from './assets/lab_window_reveal.png'
 
 // v3의 "예시 대본 불러오기"와 같은 대본·패널 자료. baseline에는
 // 일반적인 편집 가능한 씬과 샷 데이터만 둔다.

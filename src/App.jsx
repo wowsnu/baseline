@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { EXAMPLE_CHARACTERS, EXAMPLE_SCENES, EXAMPLE_STORY } from './exampleData.js'
-import detailedStyle from '../../v3/public/img/style-anchors/lab-detailed-storyboard.png'
-import photorealStyle from '../../v3/public/img/style-anchors/lab-photoreal-previz.png'
+import detailedStyle from './assets/style-anchors/lab-detailed-storyboard.png'
+import photorealStyle from './assets/style-anchors/lab-photoreal-previz.png'
 
 const STORAGE_KEY = 'scenelens-baseline-v1'
 const uid = (prefix) => `${prefix}-${crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`}`
