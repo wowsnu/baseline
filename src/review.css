@@ -26,6 +26,9 @@
 .style-option.selected { border-color: #252620; box-shadow: 0 0 0 1px #252620; }
 .style-preview { display: block; width: 100%; height: 210px; margin-bottom: 15px; object-fit: cover; }
 .style-option strong, .style-option small { display: block; padding: 0 17px; }.style-option strong { margin-bottom: 4px; font-size: 18px; }.style-option small { color: #77746c; }
+.baseline-model-picker { display: flex; align-items: center; gap: 12px; max-width: 720px; margin-top: 24px; }
+.baseline-model-picker span { margin: 0; }
+.baseline-model-picker select { min-width: 190px; padding: 9px 11px; border: 1px solid #c9c6ba; border-radius: 5px; background: #fffefa; color: #252620; }
 .setup-actions { display: flex; justify-content: space-between; max-width: 720px; margin-top: 32px; }
 .flow-actions { display: flex; justify-content: space-between; margin-top: 32px; }
 .generate-section { max-width: 760px; margin: 90px auto; }
@@ -36,8 +39,9 @@
 .character-section { max-width: 1040px; margin: 55px auto; }
 .character-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 24px; margin-top: 30px; }
 .character-card { display: flex; flex-direction: column; overflow: hidden; border: 1px solid #d4d0c5; border-radius: 9px; background: #fffefa; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04); }
-.character-image { flex: 0 0 190px; display: flex; align-items: center; justify-content: center; background: #eceae3; color: #77746c; border-bottom: 1px solid #e2dfd5; }
-.character-image img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.character-image { flex: 0 0 300px; display: flex; align-items: center; justify-content: center; background: #eceae3; color: #77746c; border-bottom: 1px solid #e2dfd5; cursor: zoom-in; }
+.character-image.empty { cursor: default; }
+.character-image img { width: 100%; height: 100%; object-fit: contain; display: block; }
 .character-card input { flex: 0 0 auto; width: 100%; border: 0; border-bottom: 1px dashed #e2dfd5; background: transparent; padding: 16px 16px 12px; font-size: 16px; font-weight: 700; text-align: center; color: #20211d; }
 .character-card input:focus { outline: none; background: rgba(37, 38, 32, 0.02); }
 .character-card textarea { flex: 1; width: 100%; min-height: 110px; margin: 0; padding: 14px 16px; border: 0; background: transparent; font-size: 15px; line-height: 1.55; color: #43433e; resize: vertical; }
@@ -46,12 +50,21 @@
 .character-action button { width: 100%; font-size: 14px; font-weight: 600; padding: 10px; }
 .character-card .delete { width: 100%; border-width: 1px 0 0; border-radius: 0; color: #9b3f36; background: transparent; }
 .character-add { min-height: 280px; display: grid; place-content: center; gap: 9px; color: #55534b; border: 1px dashed #aaa69a; border-radius: 9px; background: transparent; font-size: 28px; }.character-add span { font-size: 14px; }
+.image-preview-overlay { position: fixed; inset: 0; z-index: 1200; display: flex; align-items: center; justify-content: center; padding: 32px; background: rgba(24, 24, 20, .78); }
+.image-preview-dialog { position: relative; display: flex; flex-direction: column; align-items: center; max-width: min(92vw, 900px); max-height: 94vh; padding: 20px; border-radius: 10px; background: #fffefa; box-shadow: 0 18px 60px rgba(0,0,0,.35); }
+.image-preview-dialog img { display: block; width: auto; height: auto; max-width: 86vw; max-height: 82vh; object-fit: contain; }
+.image-preview-dialog p { margin: 12px 0 0; color: #4d4b43; font-size: 14px; }
+.image-preview-close { position: absolute; top: 8px; right: 8px; z-index: 1; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 50%; background: rgba(37,38,32,.8); color: #fff; }
 .board { display: grid; grid-template-columns: 230px minmax(0, 1fr); margin: 0 -48px; min-height: calc(100vh - 150px); border-top: 1px solid #ddd9ce; }.board-nav { padding: 24px 18px; background: #f0eee7; border-right: 1px solid #ddd9ce; }.board-nav > * { display: block; width: 100%; margin-bottom: 8px; text-align: left; }.board-nav button { color: #3b3a34; border: 0; background: transparent; }.board-nav-active { background: #fffefa !important; box-shadow: 0 1px 5px #0001; }.board-nav .scene small { display:block; margin-top:4px; color:#77746c; }.board-main { padding: 26px 30px; }.board-title { display:flex; justify-content:space-between; align-items:center; margin-bottom:24px; }.board-title h2 { display:inline; margin:0 9px 0 0; }.board-title span { color:#77746c; }.card-grid { display:grid; grid-template-columns:repeat(3,minmax(220px,1fr)); gap:22px; }.board-card { display: flex; flex-direction: column; overflow:hidden; border:1px solid #d8d5ca; border-radius:8px; background:#fffefa; box-shadow:0 3px 10px #0000000d; }.card-image { flex: 0 0 190px; width:100%; padding:0; border:0; border-bottom: 1px solid #e2dfd5; border-radius:0; background:#e7e4dc; color:#66645c; }.card-image img { width:100%; height:100%; object-fit:cover; display:block; }.card-copy { flex: 1; display: flex; flex-direction: column; padding: 0; }.card-copy strong { flex: 0 0 auto; padding: 14px 16px 4px; font-size:13px; color:#77746c; display:block; margin: 0; }.card-copy textarea { flex: 1; width:100%; min-height:95px; margin: 0; padding: 8px 16px 16px; border:0; background:transparent; font-size:15px; line-height:1.55; color:#35352f; resize:vertical; }.card-copy textarea:focus { outline:none; background:#ffffff; box-shadow: inset 0 0 0 1px #252620; }.board-card footer { flex: 0 0 auto; display:flex; border-top:1px solid #ddd9ce; background: #faf8f3; }.board-card footer button { flex:1; border:0; border-right:1px solid #ddd9ce; border-radius:0; color:#46443d; background:transparent; padding: 10px; font-weight: 600; }.board-card footer .delete { color:#9b3f36; border-right: 0; }.board-add { min-height:300px; color:#77746c; border:1px dashed #aaa69a; background:transparent; font-size:32px; border-radius: 9px; } @media(max-width:900px){.board{margin:0 -18px;grid-template-columns:1fr}.board-nav{display:flex;gap:6px;overflow:auto}.board-nav hr{display:none}.board-nav button{min-width:max-content}.card-grid{grid-template-columns:repeat(2,minmax(200px,1fr))}}
 @media (max-width: 780px) { .progress { gap: 8px; } .progress span { width: auto; flex: 1; font-size: 12px; } .review-heading { flex-direction: column; } }
 
 /* 카드 사이의 기본 삽입 제어. 마지막 카드 뒤에는 렌더하지 않는다. */
 .board-card { position: relative; overflow: visible; }
-.card-image { overflow: hidden; border-radius: 7px 7px 0 0; }
+.card-image { position: relative; overflow: hidden; border-radius: 7px 7px 0 0; }
+/* 고정 190px 틀에 이미지를 억지로 맞추면 cover는 잘리고 contain은 여백이
+   생긴다. 패널 이미지는 원본 비율대로 두고 카드 높이도 함께 늘어난다. */
+.card-image { flex: 0 0 auto; height: auto; }
+.card-image img { height: auto; object-fit: initial; }
 .insert-between { position: absolute; z-index: 2; top: 50%; right: -26px; width: 30px; height: 30px; padding: 0; transform: translateY(-50%); border: 1px solid #aaa69a; border-radius: 50%; background: #fffefa; color: #46443d; font-size: 20px; line-height: 1; box-shadow: 0 1px 4px #00000018; }
 .insert-between:hover { border-color: #252620; background: #252620; color: #fffefa; }
 .board-card:nth-child(3n) .insert-between { top: auto; right: calc(50% - 15px); bottom: -15px; transform: none; }
@@ -110,6 +123,41 @@
   border: 1px solid #ccc;
   border-radius: 6px;
   font-size: 14px;
+}
+
+.modal-panel-preview {
+  position: relative;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid #d8d5cb;
+  border-radius: 7px;
+  background: #f6f4ee;
+  color: #4d4a42;
+  cursor: zoom-in;
+}
+
+.modal-panel-preview img {
+  display: block;
+  width: 100%;
+  max-height: 250px;
+  object-fit: contain;
+  background: #e9e6dc;
+}
+
+.modal-panel-preview span {
+  display: block;
+  padding: 7px 9px;
+  text-align: left;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.modal-shot-summary {
+  margin: -3px 0 0;
+  color: #6d6a60;
+  font-size: 13px;
 }
 
 .modal-image-actions {
@@ -315,6 +363,24 @@ header .secondary:hover:not(:disabled),
 .card-image.is-pending, .character-image.is-pending {
   background: #f0eee7;
   animation: pulsePending 2s ease-in-out infinite alternate;
+}
+
+.card-image-progress {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgb(26 25 22 / 67%);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.card-image-progress .image-spinner {
+  border-color: rgb(255 255 255 / 38%);
+  border-top-color: #fff;
 }
 
 @keyframes pulsePending {
