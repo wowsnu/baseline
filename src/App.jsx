@@ -39,6 +39,51 @@ const hasFinalConsonant = (text = '') => {
   return (code - 0xac00) % 28 !== 0
 }
 
+// 샷 문장이 이름이 아니라 역할어로 인물을 부를 때의 대비책이다
+// ("주인공이 앞사람을 제친다"). 그대로 프롬프트에 쓰면 뒤에 붙는 인물
+// 목록("화면에는 민준이 보인다")과 같은 사람을 가리키는지 알 수 없어,
+// 레퍼런스를 물려도 다른 사람이 그려진다.
+//
+// 구조화 프롬프트가 lines의 text에도 이름을 쓰라고 지시하므로 보통은
+// 바꿀 것이 없다. 모델이 역할어로 돌려줄 때만 이 치환이 걸린다 —
+// 이미 이름이 있는 문장은 건드리지 않는다.
+// 인물을 가리키지 않는 흔한 말. 이걸 역할어로 잡으면 문장이 망가진다.
+const ROLE_STOPWORDS = new Set([
+  '남성', '여성', '남자', '여자', '사람', '인물', '대', '중반', '초반', '후반',
+  '머리', '체형', '복장', '옷', '살', '세', '정도', '및', '그리고',
+])
+const nameByRole = (characters = []) => {
+  const claims = new Map()
+  characters.forEach((character) => {
+    const name = (character?.name || '').trim()
+    if (!name) return
+    // description은 `주인공 러너 · 여성, 20대 중반 · 후드` 같은 모양이다.
+    // 첫 조각이 역할이고, 뒤는 외형·나이라 인물을 가리키지 않는다.
+    const role = String(character.description || '').split(/[·|,、]/)[0].trim()
+    if (!role) return
+    // 역할 구절 전체(`앞 러너`)와, 그 안의 낱말(`주인공`)을 모두 후보로
+    // 둔다. 구절이 먼저 맞으면 낱말까지 갈 일이 없다.
+    const candidates = new Set([role, ...role.split(/\s+/)])
+    candidates.forEach((word) => {
+      const token = word.trim()
+      if (token.length < 2 || ROLE_STOPWORDS.has(token) || token === name) return
+      // 두 인물이 같은 말을 쓰면(`러너`) 누구인지 정할 수 없다. 표시만
+      // 해 두고 아래에서 뺀다 — 잘못 바꾸느니 역할어로 두는 편이 낫다.
+      claims.set(token, claims.has(token) && claims.get(token) !== name ? null : name)
+    })
+  })
+  return [...claims.entries()]
+    .filter(([, name]) => Boolean(name))
+    // 긴 역할어부터 바꾼다. `앞 러너`를 `러너`가 먼저 먹지 않게.
+    .sort((left, right) => right[0].length - left[0].length)
+}
+
+const withCharacterNames = (text = '', characters = []) => (
+  nameByRole(characters).reduce((line, [role, name]) => (
+    line.includes(name) ? line : line.split(role).join(name)
+  ), text)
+)
+
 function buildBaselinePanelPrompt(shot, scene, characters = []) {
   if (!shot) return ''
   const isPov = shot.perspective === 'POV (Point of View)' || shot.perspective === 'POV'
@@ -53,8 +98,9 @@ function buildBaselinePanelPrompt(shot, scene, characters = []) {
     !isPov && size && `${size}.`,
   ].filter(Boolean).join(' ')
 
-  // 2문장: 행동 및 대사 처리
-  const rawText = (shot.description || shot.title || '').trim()
+  // 2문장: 행동 및 대사 처리. 역할어는 인물 이름으로 바꿔 아래 인물
+  // 목록과 같은 사람을 가리키게 한다.
+  const rawText = withCharacterNames((shot.description || shot.title || '').trim(), characters)
   let action = ''
   if (rawText) {
     const speechMatch = rawText.match(/^(.*?)(?:[:：]\s*|\s+말한다\s*[:：]?\s*|\s*["“])([^"”]+)["”]?$/)
@@ -274,10 +320,15 @@ export default function App() {
       const structured = await response.json()
       const nextScenes = fromStructure(structured, story.trim())
       setScenes(nextScenes); setActiveSceneId(nextScenes[0]?.id || null); setActiveShotId(nextScenes[0]?.shots[0]?.id || null)
+      // 구조화가 성별·나이와 외형까지 뽑아 준다. 역할만 남기고 버리면
+      // 레퍼런스 프롬프트가 대본에 있던 사실을 다시 못 쓴다.
       setCharacters((structured.characters || []).map((character) => ({
         id: uid('character'),
         name: character.name,
-        description: character.description || '',
+        description: [character.description, character.gender_age, character.appearance]
+          .map((part) => (part || '').trim())
+          .filter(Boolean)
+          .join(' · '),
         image: null,
       })))
       setStage('review')
