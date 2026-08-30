@@ -100,7 +100,14 @@ function buildBaselinePanelPrompt(shot, scene, characters = []) {
 
   // 2문장: 행동 및 대사 처리. 역할어는 인물 이름으로 바꿔 아래 인물
   // 목록과 같은 사람을 가리키게 한다.
-  const rawText = withCharacterNames((shot.description || shot.title || '').trim(), characters)
+  // `@`는 감독이 인물을 짚는 우리 문법이지 그림에 대한 지시가 아니다.
+  // 그대로 두면 이미지 모델이 낯선 기호를 지시로 오해하거나 화면에 글자로
+  // 그린다. 인물은 아래 castLine이 따로 말하므로 여기서 뗀다. 낱말 앞에
+  // 붙은 것만 뗀다 — `a@b.com`은 멘션이 아니라 원문의 일부다.
+  const rawText = withCharacterNames(
+    (shot.description || shot.title || '').trim().replace(/(^|[\s([{'"])@(?=[^\s@,，.。!?…])/g, '$1'),
+    characters,
+  )
   let action = ''
   if (rawText) {
     const speechMatch = rawText.match(/^(.*?)(?:[:：]\s*|\s+말한다\s*[:：]?\s*|\s*["“])([^"”]+)["”]?$/)
