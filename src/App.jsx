@@ -132,10 +132,63 @@ function buildBaselinePanelPrompt(shot, scene, characters = []) {
   return [opening, action, castLine].filter(Boolean).join(' ')
 }
 
-function charactersForShot(shot, characters = []) {
+// 샷 설명에 쓴 `@이름` 하나를 실제 인물로 푼다.
+//
+// 정확히 같은 이름이 먼저다. 없으면 `@하린이`처럼 조사가 붙은 것으로 보고
+// 이름으로 시작하는 쪽을 찾는다. 그것도 없으면 `@하`처럼 줄여 쓴 것으로
+// 보고 부분 일치를 쓰되, 후보가 둘 이상이면 누구인지 정할 수 없으므로
+// 물리지 않는다 — 잘못된 인물을 그리느니 알리는 편이 낫다.
+// 이름 뒤에 붙는 조사. `@하린이`, `@민준과`처럼 문장으로 쓴 것을 이름으로
+// 되돌리는 데 쓴다.
+const PARTICLES = ['이가', '에게서', '한테서', '으로', '에게', '한테', '이랑', '와의', '과의',
+  '은', '는', '이', '가', '을', '를', '의', '도', '만', '과', '와', '랑', '에']
+const stripParticle = (token = '') => {
+  for (const particle of PARTICLES) {
+    if (token.length > particle.length && token.endsWith(particle)) {
+      return token.slice(0, -particle.length)
+    }
+  }
+  return token
+}
+
+export function resolveMention(token, characters = []) {
+  const names = (characters || []).map((character) => character?.name).filter(Boolean)
+  const match = (value) => {
+    const exact = names.find((name) => name === value)
+    if (exact) return { name: exact, exact: true }
+    // `@하린이`처럼 이름 뒤에 문장이 이어 붙은 경우.
+    const prefixed = names.filter((name) => value.startsWith(name))
+      .sort((left, right) => right.length - left.length)[0]
+    if (prefixed) return { name: prefixed, exact: true }
+    return null
+  }
+  // 적은 그대로 → 조사를 뗀 것 순으로 본다. `@민이`는 `민`으로 줄여 쓴
+  // 것이므로 조사를 떼야 `민준`에 닿는다.
+  const bare = stripParticle(token)
+  const direct = match(token) || (bare !== token ? match(bare) : null)
+  if (direct) return { token, name: direct.name, matched: true, exact: true }
+  // 줄여 쓴 것으로 본다. 후보가 둘 이상이면 누구인지 정할 수 없다 —
+  // 잘못된 인물을 그리느니 알리는 편이 낫다.
+  const loose = names.filter((name) => name.includes(bare) || bare.includes(name))
+  if (loose.length === 1) return { token, name: loose[0], matched: true, exact: bare === token }
+  return { token, name: null, matched: false, ambiguous: loose.length > 1, options: loose }
+}
+
+export function mentionsOfShot(shot, characters = []) {
   const rawText = `${shot?.description || ''} ${shot?.title || ''}`
-  const taggedNames = [...rawText.matchAll(/@([^\s@,，.。]+)/g)].map((match) => match[1])
-  const declaredNames = taggedNames.length > 0 ? taggedNames : (shot?.characters || [])
+  const tokens = [...rawText.matchAll(/@([^\s@,，.。!?…]+)/g)]
+    .map((match) => match[1].trim())
+    .filter((token, index, all) => token && all.indexOf(token) === index)
+  return tokens.map((token) => resolveMention(token, characters))
+}
+
+function charactersForShot(shot, characters = []) {
+  // `@이름`은 AI가 채운 명단을 **덮어쓰지 않고 더한다.** 덮어쓰면 한 명을
+  // 강조하려고 `@민준`을 적었을 뿐인데 같은 화면의 도윤이 빠진다.
+  const tagged = mentionsOfShot(shot, characters)
+    .filter((mention) => mention.matched)
+    .map((mention) => mention.name)
+  const declaredNames = [...new Set([...(shot?.characters || []), ...tagged])]
   if (!declaredNames.length) return []
   return (characters || []).filter((character) => character?.name && declaredNames.includes(character.name))
 }
@@ -198,6 +251,35 @@ function fromStructure(data, story) {
       })),
     }
   })
+}
+
+// `@이름`을 쓴 자리 아래에 실제로 물린 인물을 보여 준다. 적은 글자를
+// 그대로 되비추면 `@하`처럼 줄여 썼을 때 적용된 것인지 알 수 없고, 오타로
+// 아무도 물리지 않은 경우와 구분되지 않는다.
+function MentionBadges({ shot, characters }) {
+  const mentions = mentionsOfShot(shot, characters)
+  if (mentions.length === 0) return null
+  return (
+    <div className="mention-badges" aria-label="이 샷에 지정한 인물">
+      {mentions.map((mention) => (
+        <span
+          key={mention.token}
+          className={mention.matched ? 'matched' : 'unmatched'}
+          title={mention.matched
+            ? (mention.exact
+              ? `${mention.name}의 기준 그림이 이 샷에 물립니다`
+              : `@${mention.token} → ${mention.name}의 기준 그림이 이 샷에 물립니다`)
+            : mention.ambiguous
+              ? `${mention.options.join(', ')} 중 누구인지 정할 수 없습니다. 이름을 끝까지 적어 주세요.`
+              : '이런 이름의 인물이 없습니다. 캐릭터 목록에 있는 이름으로 적어 주세요.'}
+        >
+          @{mention.matched ? mention.name : mention.token}
+          {mention.matched && !mention.exact && <i>← @{mention.token}</i>}
+          {!mention.matched && <i>{mention.ambiguous ? '모호함' : '없는 인물'}</i>}
+        </span>
+      ))}
+    </div>
+  )
 }
 
 function download(name, text, type) {
@@ -608,7 +690,7 @@ export default function App() {
       <span className="placeholder-sub">하단 생성 버튼을 눌러보세요</span>
     </div>
   )}
-</div><div className="card-copy"><strong>Scene {scenes.indexOf(activeScene) + 1} | Shot {index + 1}</strong><textarea value={shot.description || ''} aria-label={`샷 ${index + 1} 설명`} onChange={(event) => updateShot(shot.id, { description: event.target.value })} /></div><footer><button className="edit-btn" onClick={() => setEditingShotId(shot.id)}>Edit</button><button onClick={() => generateShot(shot)} disabled={panelPending[shot.id]}>{panelPending[shot.id] ? '생성 중…' : shot.image ? '다시 생성' : '생성'}</button><button className="delete" onClick={() => deleteShot(shot.id)}>삭제</button></footer>{index < activeScene.shots.length - 1 && <button className="insert-between" aria-label={`샷 ${index + 1} 뒤에 삽입`} onClick={() => insertShot(index + 1)}>＋</button>}</article>)}</div></section></section>}
+</div><div className="card-copy"><strong>Scene {scenes.indexOf(activeScene) + 1} | Shot {index + 1}</strong><textarea value={shot.description || ''} aria-label={`샷 ${index + 1} 설명`} onChange={(event) => updateShot(shot.id, { description: event.target.value })} /><MentionBadges shot={shot} characters={characters} /></div><footer><button className="edit-btn" onClick={() => setEditingShotId(shot.id)}>Edit</button><button onClick={() => generateShot(shot)} disabled={panelPending[shot.id]}>{panelPending[shot.id] ? '생성 중…' : shot.image ? '다시 생성' : '생성'}</button><button className="delete" onClick={() => deleteShot(shot.id)}>삭제</button></footer>{index < activeScene.shots.length - 1 && <button className="insert-between" aria-label={`샷 ${index + 1} 뒤에 삽입`} onClick={() => insertShot(index + 1)}>＋</button>}</article>)}</div></section></section>}
     
     {editingShotId && (() => {
       const editingShot = activeScene?.shots.find((s) => s.id === editingShotId)
@@ -670,6 +752,7 @@ export default function App() {
                 value={editingShot.description || ''}
                 onChange={(e) => updateShot(editingShot.id, { description: e.target.value })}
               />
+              <MentionBadges shot={editingShot} characters={characters} />
               {editingShot.image && (
                 <div className="modal-image-actions">
                   <button className="delete" onClick={() => updateShot(editingShot.id, { image: null })}>이미지 제거</button>

@@ -398,3 +398,48 @@ header .secondary:hover:not(:disabled),
   font-weight: 600;
   border-color: #252620;
 }
+
+/* `@이름`으로 지정한 인물. 실제로 물린 것과 아닌 것을 색으로 가른다 —
+   적은 글자를 그대로 되비추면 오타가 적용된 것처럼 읽힌다. */
+.mention-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 0 16px 12px;
+}
+
+/* 모달 안에서는 카드의 좌우 여백을 물려받지 않는다. */
+.modal-body .mention-badges { padding: 6px 0 0; }
+
+.mention-badges span {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.35;
+  cursor: default;
+}
+
+/* 캐릭터 목록에서 찾은 인물. 이 샷의 생성에 기준 그림이 물린다. */
+.mention-badges .matched {
+  border: 1px solid #7fa8c9;
+  background: #e8f1f8;
+  color: #2c5d80;
+}
+
+/* 없는 이름이거나 후보가 여럿인 표기. 물리지 않으므로 갈라 둔다. */
+.mention-badges .unmatched {
+  border: 1px dashed #c8a24a;
+  background: #fbf3de;
+  color: #86611a;
+}
+
+.mention-badges span > i {
+  font-style: normal;
+  font-size: 10.5px;
+  font-weight: 600;
+  opacity: 0.75;
+}
