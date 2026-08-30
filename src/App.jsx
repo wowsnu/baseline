@@ -139,12 +139,6 @@ function buildBaselinePanelPrompt(shot, scene, characters = []) {
   return [opening, action, castLine].filter(Boolean).join(' ')
 }
 
-// 샷 설명에 쓴 `@이름` 하나를 실제 인물로 푼다.
-//
-// 정확히 같은 이름이 먼저다. 없으면 `@하린이`처럼 조사가 붙은 것으로 보고
-// 이름으로 시작하는 쪽을 찾는다. 그것도 없으면 `@하`처럼 줄여 쓴 것으로
-// 보고 부분 일치를 쓰되, 후보가 둘 이상이면 누구인지 정할 수 없으므로
-// 물리지 않는다 — 잘못된 인물을 그리느니 알리는 편이 낫다.
 // 이름 뒤에 붙는 조사. `@하린이`, `@민준과`처럼 문장으로 쓴 것을 이름으로
 // 되돌리는 데 쓴다.
 const PARTICLES = ['이가', '에게서', '한테서', '으로', '에게', '한테', '이랑', '와의', '과의',
@@ -158,27 +152,31 @@ const stripParticle = (token = '') => {
   return token
 }
 
+// 샷 설명에 쓴 `@이름` 하나를 실제 인물로 푼다.
+//
+// **이름 전체를 적어야 물린다.** `@하`처럼 줄여 쓴 것은 `하린`이 아니다 —
+// 줄임을 받아 주면 오타가 조용히 다른 인물로 물리고, 인물이 늘어난 뒤에
+// 같은 글자가 갑자기 다른 사람을 가리키게 된다. 못 찾으면 그 사실을
+// 밝혀서 감독이 그 자리에서 고치게 한다.
+//
+// 조사는 문장으로 쓴 것이므로 받아 준다 — `@하린이 본다`의 `하린이`는
+// 줄여 쓴 것이 아니라 이름에 조사가 붙은 것이다.
 export function resolveMention(token, characters = []) {
   const names = (characters || []).map((character) => character?.name).filter(Boolean)
   const match = (value) => {
     const exact = names.find((name) => name === value)
-    if (exact) return { name: exact, exact: true }
-    // `@하린이`처럼 이름 뒤에 문장이 이어 붙은 경우.
-    const prefixed = names.filter((name) => value.startsWith(name))
-      .sort((left, right) => right.length - left.length)[0]
-    if (prefixed) return { name: prefixed, exact: true }
-    return null
+    if (exact) return exact
+    // `@하린이`처럼 이름 뒤에 문장이 이어 붙은 경우. 이름으로 **시작**해야
+    // 한다 — 이름의 일부만 적은 것은 여기에 걸리지 않는다.
+    return names.filter((name) => value.startsWith(name))
+      .sort((left, right) => right.length - left.length)[0] || null
   }
-  // 적은 그대로 → 조사를 뗀 것 순으로 본다. `@민이`는 `민`으로 줄여 쓴
-  // 것이므로 조사를 떼야 `민준`에 닿는다.
   const bare = stripParticle(token)
   const direct = match(token) || (bare !== token ? match(bare) : null)
-  if (direct) return { token, name: direct.name, matched: true, exact: true }
-  // 줄여 쓴 것으로 본다. 후보가 둘 이상이면 누구인지 정할 수 없다 —
-  // 잘못된 인물을 그리느니 알리는 편이 낫다.
-  const loose = names.filter((name) => name.includes(bare) || bare.includes(name))
-  if (loose.length === 1) return { token, name: loose[0], matched: true, exact: bare === token }
-  return { token, name: null, matched: false, ambiguous: loose.length > 1, options: loose }
+  if (direct) return { token, name: direct, matched: true, exact: true }
+  // 줄여 쓴 것으로 보이면 무엇을 적어야 하는지 알려 준다. 물리지는 않는다.
+  const partial = names.filter((name) => name.startsWith(bare))
+  return { token, name: null, matched: false, ambiguous: partial.length > 0, options: partial }
 }
 
 export function mentionsOfShot(shot, characters = []) {
@@ -277,12 +275,12 @@ function MentionBadges({ shot, characters }) {
               ? `${mention.name}의 기준 그림이 이 샷에 물립니다`
               : `@${mention.token} → ${mention.name}의 기준 그림이 이 샷에 물립니다`)
             : mention.ambiguous
-              ? `${mention.options.join(', ')} 중 누구인지 정할 수 없습니다. 이름을 끝까지 적어 주세요.`
+              ? `이름을 끝까지 적어 주세요 — ${mention.options.join(', ')}`
               : '이런 이름의 인물이 없습니다. 캐릭터 목록에 있는 이름으로 적어 주세요.'}
         >
           @{mention.matched ? mention.name : mention.token}
           {mention.matched && !mention.exact && <i>← @{mention.token}</i>}
-          {!mention.matched && <i>{mention.ambiguous ? '모호함' : '없는 인물'}</i>}
+          {!mention.matched && <i>{mention.ambiguous ? '이름을 끝까지' : '없는 인물'}</i>}
         </span>
       ))}
     </div>
