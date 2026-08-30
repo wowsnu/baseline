@@ -298,6 +298,11 @@ function download(name, text, type) {
 export default function App() {
   const [story, setStory] = useState(EXAMPLE_STORY)
   const [scenes, setScenes] = useState(EXAMPLE_SCENES)
+  // 생성은 await로 이어 달리는데, 그동안 클로저의 scenes는 시작 시점에
+  // 멈춰 있다. 앞 샷을 방금 그렸어도 다음 샷이 그 그림을 이웃으로 물지
+  // 못하므로, 항상 최신 값을 볼 수 있는 통로를 둔다.
+  const scenesRef = useRef(scenes)
+  scenesRef.current = scenes
   const [activeSceneId, setActiveSceneId] = useState(EXAMPLE_SCENES[0].id)
   const [activeShotId, setActiveShotId] = useState(EXAMPLE_SCENES[0].shots[0].id)
   const [stage, setStage] = useState('script')
@@ -504,8 +509,17 @@ export default function App() {
     }
     setStage('panels')
   }
-  const generateShot = async (shot) => {
-    if (!shot?.id) return
+  const generateShot = async (target) => {
+    const shotId = target?.id
+    if (!shotId) return
+    // 넘겨받은 객체는 눌린 시점의 사본이다. 방금 Edit에서 고친 샷 크기·
+    // 앵글·설명을 쓰려면 지금 상태에서 다시 읽어야 한다 — 사본을 그대로
+    // 쓰면 고치고 바로 생성했을 때 옛 값으로 그려진다. 여러 샷을 이어
+    // 그릴 때 앞 샷의 새 그림을 이웃으로 물리는 것도 같은 이유다.
+    const currentScenes = scenesRef.current
+    const latestScene = currentScenes.find((entry) => entry.shots?.some((item) => item?.id === shotId))
+      || activeScene
+    const shot = latestScene?.shots?.find((item) => item?.id === shotId) || target
     const missingCharacters = charactersForShot(shot, characters).filter((character) => !character.image)
     if (missingCharacters.length > 0) {
       setNotice(`${missingCharacters.map((character) => character.name).join(', ')} 레퍼런스를 먼저 생성해 주세요.`)
@@ -514,7 +528,7 @@ export default function App() {
     }
     setPanelPending((current) => ({ ...current, [shot.id]: true }))
     try {
-      const scene = activeScene
+      const scene = latestScene
       const shotIndex = scene?.shots ? scene.shots.findIndex((item) => item?.id === shot.id) : -1
       const previousShot = shotIndex > 0 ? scene.shots[shotIndex - 1] : null
       const nextShot = (shotIndex >= 0 && shotIndex < (scene?.shots?.length || 0) - 1) ? scene.shots[shotIndex + 1] : null
@@ -764,8 +778,23 @@ export default function App() {
                 </div>
               )}
             </div>
+            {/* `완료`는 고친 값을 저장만 한다(이미 updateShot이 즉시 반영).
+                고친 값으로 그림까지 보려면 여기서 바로 다시 그린다 — 모달을
+                닫고 카드에서 그 샷을 다시 찾게 하지 않는다. 진행 상태는
+                카드의 pending 표시가 함께 맡는다. */}
             <div className="modal-footer">
-              <button onClick={() => setEditingShotId(null)}>완료</button>
+              <button className="secondary" onClick={() => setEditingShotId(null)}>완료</button>
+              <button
+                disabled={panelPending[editingShot.id]}
+                onClick={() => {
+                  setEditingShotId(null)
+                  generateShot(editingShot)
+                }}
+              >
+                {panelPending[editingShot.id]
+                  ? '생성 중…'
+                  : editingShot.image ? '이 설정으로 다시 생성' : '이 설정으로 생성'}
+              </button>
             </div>
           </div>
         </div>
