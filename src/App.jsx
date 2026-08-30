@@ -315,6 +315,20 @@ export default function App() {
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState('')
   const [editingShotId, setEditingShotId] = useState(null)
+  // Edit을 열 때의 값. 고친 값은 updateShot이 즉시 저장하므로, 무엇이
+  // 달라졌는지는 이 스냅샷과 견줘야 알 수 있다. 그 차이를 생성에 함께
+  // 보내야 모델이 "이것만 바꾸고 나머지는 그대로"를 지킬 수 있다.
+  const [editingShotBefore, setEditingShotBefore] = useState(null)
+  const openShotEditor = (shot) => {
+    setEditingShotBefore(shot ? { ...shot } : null)
+    setEditingShotId(shot?.id || null)
+  }
+  // 그리지 않고 닫으면 비교 대상도 놓는다. 남겨 두면 나중에 카드에서 그냥
+  // 다시 생성했을 때, 그때 고친 것도 아닌 항목이 `이것만 바꿔라`로 나간다.
+  const closeShotEditor = () => {
+    setEditingShotBefore(null)
+    setEditingShotId(null)
+  }
   const [previewImage, setPreviewImage] = useState(null)
   const activeScene = scenes.find((scene) => scene.id === activeSceneId) || scenes[0]
   const requiredCharacters = (characters || []).filter((character) => character?.name?.trim())
@@ -509,6 +523,25 @@ export default function App() {
     }
     setStage('panels')
   }
+  // 이번에 무엇만 달라지는가. Edit을 열 때의 값과 견줘 실제로 바뀐 항목만
+  // 남긴다. 이 목록이 있어야 모델이 "이것만 고치고 나머지는 그대로"를 지킬
+  // 대상을 갖는다 — 최종 값만 받으면 앵글 하나를 바꿔도 자세·소품·구도까지
+  // 새로 그려, 감독은 방금 고른 한 가지가 화면에서 무엇을 바꾸는지 못 본다.
+  const changesSince = (before, shot) => {
+    if (!before || before.id !== shot?.id) return []
+    const lines = []
+    if (before.shotSize !== shot.shotSize) {
+      lines.push(`shot size: ${before.shotSize || '미정'} → ${shot.shotSize || '미정'}`)
+    }
+    if (before.perspective !== shot.perspective) {
+      lines.push(`angle: ${before.perspective || '미정'} → ${shot.perspective || '미정'}`)
+    }
+    // 설명이 바뀌면 화면 자체가 달라지는 것이라 `이것만`이 성립하지 않는다.
+    // 그때는 목록을 비워 처음 그리는 것과 같게 둔다.
+    if ((before.description || '') !== (shot.description || '')) return []
+    return lines
+  }
+
   const generateShot = async (target) => {
     const shotId = target?.id
     if (!shotId) return
@@ -526,6 +559,8 @@ export default function App() {
       setStage('characters')
       return
     }
+    // 값 하나만 바꿔 다시 그리는가. Edit을 열 때의 값과 견준다.
+    const changes = changesSince(editingShotBefore, shot)
     setPanelPending((current) => ({ ...current, [shot.id]: true }))
     try {
       const scene = latestScene
@@ -542,6 +577,10 @@ export default function App() {
         // 이전 샷의 이미지를 연속성(neighbor-before)으로 전달하여 색감/조명/배경 통일
         previousShot?.image && { name: '앞 패널', kind: 'neighbor-before', image: previousShot.image },
         shot.inserted && nextShot?.image && { name: '뒤 패널', kind: 'neighbor-after', image: nextShot.image },
+        // 값 하나만 바꾸는 중이면 지금 그림을 함께 물린다. 이 그림이 있어야
+        // `나머지는 그대로`가 지킬 대상을 갖는다 — 글로만 유지하라고 하면
+        // 무엇을 유지할지 알 수 없다.
+        changes.length > 0 && shot.image && { name: '현재 패널', kind: 'current', image: shot.image },
         ...referenceCharacters.map((character) => ({ name: character.name || '인물', kind: 'character', image: character.image })),
       ].filter(Boolean)
 
@@ -562,12 +601,15 @@ export default function App() {
           shared: scene?.sourceText || scene?.title || '',
           previous: previousPrompt,
           references,
-          style: '', style_preset: artStyle, layout: '', changes: [], model: panelImageModel,
+          style: '', style_preset: artStyle, layout: '', changes, model: panelImageModel,
         }),
       })
       if (!response.ok) throw new Error('panel image unavailable')
       const data = await response.json()
       updateShot(shot.id, { image: `data:image/png;base64,${data.image}`, generatedStyle: artStyle, inserted: false })
+      // 비교 대상은 이번 한 번에만 쓴다. 남겨 두면 다음 생성이 옛 값과
+      // 견줘 바뀌지도 않은 항목을 `이것만 바꿔라`로 보낸다.
+      if (editingShotBefore?.id === shot.id) setEditingShotBefore(null)
     } catch (err) {
       console.error('generateShot error:', err)
       setNotice('패널 이미지를 만들지 못했습니다. 백엔드 연결을 확인해 주세요.')
@@ -709,18 +751,18 @@ export default function App() {
       <span className="placeholder-sub">하단 생성 버튼을 눌러보세요</span>
     </div>
   )}
-</div><div className="card-copy"><strong>Scene {scenes.indexOf(activeScene) + 1} | Shot {index + 1}</strong><textarea value={shot.description || ''} aria-label={`샷 ${index + 1} 설명`} onChange={(event) => updateShot(shot.id, { description: event.target.value })} /><MentionBadges shot={shot} characters={characters} /></div><footer><button className="edit-btn" onClick={() => setEditingShotId(shot.id)}>Edit</button><button onClick={() => generateShot(shot)} disabled={panelPending[shot.id]}>{panelPending[shot.id] ? '생성 중…' : shot.image ? '다시 생성' : '생성'}</button><button className="delete" onClick={() => deleteShot(shot.id)}>삭제</button></footer>{index < activeScene.shots.length - 1 && <button className="insert-between" aria-label={`샷 ${index + 1} 뒤에 삽입`} onClick={() => insertShot(index + 1)}>＋</button>}</article>)}</div></section></section>}
+</div><div className="card-copy"><strong>Scene {scenes.indexOf(activeScene) + 1} | Shot {index + 1}</strong><textarea value={shot.description || ''} aria-label={`샷 ${index + 1} 설명`} onChange={(event) => updateShot(shot.id, { description: event.target.value })} /><MentionBadges shot={shot} characters={characters} /></div><footer><button className="edit-btn" onClick={() => openShotEditor(shot)}>Edit</button><button onClick={() => generateShot(shot)} disabled={panelPending[shot.id]}>{panelPending[shot.id] ? '생성 중…' : shot.image ? '다시 생성' : '생성'}</button><button className="delete" onClick={() => deleteShot(shot.id)}>삭제</button></footer>{index < activeScene.shots.length - 1 && <button className="insert-between" aria-label={`샷 ${index + 1} 뒤에 삽입`} onClick={() => insertShot(index + 1)}>＋</button>}</article>)}</div></section></section>}
     
     {editingShotId && (() => {
       const editingShot = activeScene?.shots.find((s) => s.id === editingShotId)
       if (!editingShot) return null
       const shotIndex = activeScene.shots.findIndex((s) => s.id === editingShotId)
       return (
-        <div className="modal-overlay" onClick={() => setEditingShotId(null)}>
+        <div className="modal-overlay" onClick={() => closeShotEditor()}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
               <h3>Shot {shotIndex + 1} 편집</h3>
-              <button className="modal-close" onClick={() => setEditingShotId(null)}>✕</button>
+              <button className="modal-close" onClick={() => closeShotEditor()}>✕</button>
             </div>
             <div className="modal-body">
               {editingShot.image && <button className="modal-panel-preview" onClick={() => setPreviewImage({ src: editingShot.image, name: `Shot ${shotIndex + 1}` })}><img src={editingShot.image} alt={`Shot ${shotIndex + 1} 현재 패널`} /><span>현재 패널 · 클릭하여 확대</span></button>}
@@ -783,7 +825,7 @@ export default function App() {
                 닫고 카드에서 그 샷을 다시 찾게 하지 않는다. 진행 상태는
                 카드의 pending 표시가 함께 맡는다. */}
             <div className="modal-footer">
-              <button className="secondary" onClick={() => setEditingShotId(null)}>완료</button>
+              <button className="secondary" onClick={() => closeShotEditor()}>완료</button>
               <button
                 disabled={panelPending[editingShot.id]}
                 onClick={() => {
