@@ -567,7 +567,13 @@ export default function App() {
           description: shot.description || '',
           shotSize: shot.shotSize || '',
           perspective: shot.perspective || '',
-          image: shot.image || null,
+          // 그림 자체는 넣지 않는다. base64로 박으면 패널 열댓 장에
+          // 수십 MB가 되어 서버가 거부하고, 그러면 **행동 로그까지 함께**
+          // 못 올라간다 (실제로 67MB가 반려됐다). 로그는 수십 KB다.
+          //
+          // 분석에 필요한 것은 "그림이 있었나"이지 그림 자체가 아니다 —
+          // 최종 산출물은 화면 녹화와 파일로 따로 남는다.
+          has_image: Boolean(shot.image),
         })),
       })),
     }
