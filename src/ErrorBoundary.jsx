@@ -1,9 +1,13 @@
 import React from 'react'
+import {
+  BASELINE_CHECKPOINT_KEY,
+  promotePreviousCheckpoint,
+} from './recoveryCheckpoint.js'
 
 export class ErrorBoundary extends React.Component {
   constructor(props) {
     super(props)
-    this.state = { hasError: false, error: null }
+    this.state = { hasError: false, error: null, recovering: false }
   }
 
   static getDerivedStateFromError(error) {
@@ -16,6 +20,16 @@ export class ErrorBoundary extends React.Component {
 
   handleReset = () => {
     this.setState({ hasError: false, error: null })
+  }
+
+  handlePreviousCheckpoint = async () => {
+    this.setState({ recovering: true })
+    const restored = await promotePreviousCheckpoint(BASELINE_CHECKPOINT_KEY)
+    if (restored) {
+      window.location.reload()
+      return
+    }
+    this.setState({ recovering: false })
   }
 
   render() {
@@ -38,9 +52,12 @@ export class ErrorBoundary extends React.Component {
           <p style={{ fontSize: '14px', color: '#64748b', lineHeight: '1.6', marginBottom: '20px' }}>
             {this.state.error?.message || '알 수 없는 오류가 발생했습니다.'}
           </p>
+          <p style={{ fontSize: '14px', color: '#475569', lineHeight: '1.6', marginBottom: '20px' }}>
+            생성한 사진을 포함한 작업이 자동 저장되어 있습니다. 마지막 저장 상태를 먼저 불러오고, 문제가 반복되면 이전 체크포인트를 사용하세요.
+          </p>
           <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
             <button
-              onClick={this.handleReset}
+              onClick={() => window.location.reload()}
               style={{
                 padding: '10px 20px',
                 background: '#2563eb',
@@ -51,10 +68,11 @@ export class ErrorBoundary extends React.Component {
                 cursor: 'pointer'
               }}
             >
-              다시 시도
+              마지막 저장 상태
             </button>
             <button
-              onClick={() => window.location.reload()}
+              onClick={this.handlePreviousCheckpoint}
+              disabled={this.state.recovering}
               style={{
                 padding: '10px 20px',
                 background: '#f1f5f9',
@@ -65,8 +83,9 @@ export class ErrorBoundary extends React.Component {
                 cursor: 'pointer'
               }}
             >
-              새로고침
+              {this.state.recovering ? '복구 중…' : '이전 체크포인트'}
             </button>
+            <button onClick={this.handleReset}>화면만 다시 시도</button>
           </div>
         </div>
       )

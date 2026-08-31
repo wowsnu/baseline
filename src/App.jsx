@@ -6,6 +6,13 @@ import {
   phase, startTask, endTask, uploadedAt, markUploaded, exportedAt,
   participantId, setParticipantId,
 } from './studyLog.js'
+import {
+  BASELINE_CHECKPOINT_KEY,
+  clearCheckpoints,
+  pauseCheckpointing,
+  readCheckpoint,
+  saveCheckpoint,
+} from './recoveryCheckpoint.js'
 import detailedStyle from './assets/style-anchors/lab-detailed-storyboard.png'
 import photorealStyle from './assets/style-anchors/lab-photoreal-previz.png'
 
@@ -347,39 +354,51 @@ export default function App() {
   const referencesPending = requiredCharacters.some((character) => characterPending[character.id])
 
   useEffect(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem(STORAGE_KEY))
-      const isLegacySeededExample = saved?.story?.trim() === EXAMPLE_STORY.trim()
-        && saved?.schemaVersion !== STORAGE_SCHEMA_VERSION
-      if (isLegacySeededExample) {
-        localStorage.removeItem(STORAGE_KEY)
-      } else if (saved?.scenes && Array.isArray(saved.scenes) && saved.scenes.length > 0) {
-        setStory(saved.story || '')
-        setScenes(saved.scenes.map((scene) => ({
-          ...scene,
-          shots: (scene.shots || []).map((shot) => ({
-            ...shot,
-            shotSize: shot.shotSize || 'Medium Shot',
-            perspective: shot.perspective || 'Eye Level',
-          })),
-        })))
-        setActiveSceneId(saved.activeSceneId || saved.scenes[0]?.id || null)
-        setActiveShotId(saved.activeShotId || null)
-        setStage('script')
-        setArtStyle(saved.artStyle === 'photoreal' ? 'photoreal' : 'detailed')
-        setPanelImageModel(['gpt-image-1', 'gpt-image-2', 'flux-2-klein'].includes(saved.panelImageModel) ? saved.panelImageModel : 'gpt-image-2')
-        const rawChars = Array.isArray(saved.characters) ? saved.characters : []
-        const validChars = rawChars.filter(Boolean).map((c) => ({
-          id: c.id || uid('character'),
-          name: c.name || '',
-          description: c.description || '',
-          image: c.image || null,
-        }))
-        const isDefaultStory = saved.story?.trim() === EXAMPLE_STORY.trim()
-        setCharacters(isDefaultStory ? EXAMPLE_CHARACTERS : validChars)
+    let cancelled = false
+    const restore = async () => {
+      try {
+        const checkpoint = await readCheckpoint(BASELINE_CHECKPOINT_KEY)
+        let saved = checkpoint?.state || JSON.parse(localStorage.getItem(STORAGE_KEY))
+        const isLegacySeededExample = !checkpoint
+          && saved?.story?.trim() === EXAMPLE_STORY.trim()
+          && saved?.schemaVersion !== STORAGE_SCHEMA_VERSION
+        if (isLegacySeededExample) {
+          localStorage.removeItem(STORAGE_KEY)
+          saved = null
+        }
+        if (!cancelled && saved) {
+          const restoredScenes = Array.isArray(saved.scenes) ? saved.scenes.map((scene) => ({
+            ...scene,
+            shots: (scene.shots || []).map((shot) => ({
+              ...shot,
+              shotSize: shot.shotSize || 'Medium Shot',
+              perspective: shot.perspective || 'Eye Level',
+            })),
+          })) : []
+          setStory(saved.story || '')
+          setScenes(restoredScenes)
+          setActiveSceneId(saved.activeSceneId || restoredScenes[0]?.id || null)
+          setActiveShotId(saved.activeShotId || null)
+          setStage(checkpoint && saved.stage !== 'generating' ? (saved.stage || 'script') : 'script')
+          setArtStyle(saved.artStyle === 'photoreal' ? 'photoreal' : 'detailed')
+          setPanelImageModel(['gpt-image-1', 'gpt-image-2', 'flux-2-klein'].includes(saved.panelImageModel) ? saved.panelImageModel : 'gpt-image-2')
+          const validChars = (Array.isArray(saved.characters) ? saved.characters : []).filter(Boolean).map((c) => ({
+            id: c.id || uid('character'),
+            name: c.name || '',
+            description: c.description || '',
+            image: c.image || null,
+          }))
+          const isDefaultStory = saved.story?.trim() === EXAMPLE_STORY.trim()
+          setCharacters(validChars.length ? validChars : (isDefaultStory ? EXAMPLE_CHARACTERS : []))
+        }
+      } catch (error) {
+        console.warn('[recovery] baseline restore skipped', error)
+      } finally {
+        if (!cancelled) setHydrated(true)
       }
-    } catch { }
-    setHydrated(true)
+    }
+    void restore()
+    return () => { cancelled = true }
   }, [])
 
   useEffect(() => {
@@ -416,6 +435,27 @@ export default function App() {
     } catch (e) {
       // localStorage 저장 실패가 앱을 중단시키지 않도록 안전하게 보호
       console.warn('localStorage save skipped:', e)
+    }
+  }, [story, scenes, activeSceneId, activeShotId, stage, artStyle, panelImageModel, characters, hydrated])
+
+  useEffect(() => {
+    if (!hydrated) return undefined
+    const snapshot = {
+      story,
+      scenes,
+      activeSceneId,
+      activeShotId,
+      stage: stage === 'generating' ? 'setup' : stage,
+      artStyle,
+      panelImageModel,
+      characters,
+    }
+    const persist = () => { void saveCheckpoint(BASELINE_CHECKPOINT_KEY, snapshot) }
+    const timer = window.setTimeout(persist, 700)
+    window.addEventListener('pagehide', persist)
+    return () => {
+      window.clearTimeout(timer)
+      window.removeEventListener('pagehide', persist)
     }
   }, [story, scenes, activeSceneId, activeShotId, stage, artStyle, panelImageModel, characters, hydrated])
 
@@ -788,7 +828,11 @@ export default function App() {
             : '⚠️ 이 세션은 한 번도 내보내지 않았습니다.\n지우면 기록이 사라집니다.\n\n')
           + `수정 ${edits.total}건, 생성 ${regeneration.total}건의 기록을 지웁니다. 계속할까요?`,
         )
-        if (ok) { resetLog(); setStudyPhase(phase()); setUploaded(false) }
+        if (ok) {
+          resetLog()
+          pauseCheckpointing()
+          void clearCheckpoints(BASELINE_CHECKPOINT_KEY).finally(() => window.location.reload())
+        }
       }
     }
     window.addEventListener('keydown', onKey)
