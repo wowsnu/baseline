@@ -266,7 +266,9 @@ function fromStructure(data, story) {
       sourceText: descriptions.map((line) => line.text).join(' ').replace(/\s+/g, ' ').trim() || story,
       facts: factsFromHeading(scene?.heading),
       shots: (descriptions.length ? descriptions : [{ text: story, characters: [] }]).map((line, index) => ({
-        id: uid('shot'), title: `샷 ${index + 1}`, description: line.text, characters: line.characters || [], shotSize: line.shot_size || 'Medium Shot', perspective: line.perspective || 'Eye Level', image: null,
+        // 대사는 그림 밖 텍스트로 둔다 — 콘티의 대사 칸과 같다. 그림에는
+        // 넣지 않으므로 생성 프롬프트(`description`)와는 따로 보관한다.
+        id: uid('shot'), title: `샷 ${index + 1}`, description: line.text, dialogue: line.dialogue || '', characters: line.characters || [], shotSize: line.shot_size || 'Medium Shot', perspective: line.perspective || 'Eye Level', image: null,
       })),
     }
   })
@@ -969,7 +971,7 @@ export default function App() {
       <span className="placeholder-sub">하단 생성 버튼을 눌러보세요</span>
     </div>
   )}
-</div><div className="card-copy"><strong>Scene {scenes.indexOf(activeScene) + 1} | Shot {index + 1}</strong><textarea value={shot.description || ''} aria-label={`샷 ${index + 1} 설명`} onChange={(event) => { updateShot(shot.id, { description: event.target.value }); logShotEdit(shot.id, 'description') }} /><MentionBadges shot={shot} characters={characters} /></div><footer><button className="edit-btn" onClick={() => openShotEditor(shot)}>Edit</button><button onClick={() => generateShot(shot)} disabled={panelPending[shot.id]}>{panelPending[shot.id] ? '생성 중…' : shot.image ? '다시 생성' : '생성'}</button><button className="delete" onClick={() => deleteShot(shot.id)}>삭제</button></footer>{index < activeScene.shots.length - 1 && <button className="insert-between" aria-label={`샷 ${index + 1} 뒤에 삽입`} onClick={() => insertShot(index + 1)}>＋</button>}</article>)}</div></section></section>}
+</div><div className="card-copy"><strong>Scene {scenes.indexOf(activeScene) + 1} | Shot {index + 1}</strong><textarea value={shot.description || ''} aria-label={`샷 ${index + 1} 설명`} onChange={(event) => { updateShot(shot.id, { description: event.target.value }); logShotEdit(shot.id, 'description') }} />{/* 대사는 그림 밖 텍스트로 둔다 — 콘티의 대사 칸과 같은 자리다. 생성 프롬프트는 `description`만 읽으므로 그림에는 들어가지 않는다. */}{shot.dialogue && <q className="shot-dialogue">{shot.dialogue}</q>}<MentionBadges shot={shot} characters={characters} /></div><footer><button className="edit-btn" onClick={() => openShotEditor(shot)}>Edit</button><button onClick={() => generateShot(shot)} disabled={panelPending[shot.id]}>{panelPending[shot.id] ? '생성 중…' : shot.image ? '다시 생성' : '생성'}</button><button className="delete" onClick={() => deleteShot(shot.id)}>삭제</button></footer>{index < activeScene.shots.length - 1 && <button className="insert-between" aria-label={`샷 ${index + 1} 뒤에 삽입`} onClick={() => insertShot(index + 1)}>＋</button>}</article>)}</div></section></section>}
     
     {editingShotId && (() => {
       const editingShot = activeScene?.shots.find((s) => s.id === editingShotId)
