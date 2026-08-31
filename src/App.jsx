@@ -1,5 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { EXAMPLE_CHARACTERS, EXAMPLE_SCENES, EXAMPLE_STORY } from './exampleData.js'
+import {
+  logEdit, logEvent, summarize, exportLog, resetLog,
+  condition, setCondition, conditionOrder, setConditionOrder,
+  phase, startTask, endTask, uploadedAt, markUploaded, exportedAt,
+} from './studyLog.js'
 import detailedStyle from './assets/style-anchors/lab-detailed-storyboard.png'
 import photorealStyle from './assets/style-anchors/lab-photoreal-previz.png'
 
@@ -314,6 +319,10 @@ export default function App() {
   const [hydrated, setHydrated] = useState(false)
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState('')
+  // 실험 진행 상태. SceneLens와 같은 흐름을 쓴다 — 참가자가 두 조건을
+  // 오가므로 조작이 다르면 그 자체가 조건 간 차이가 된다.
+  const [studyPhase, setStudyPhase] = useState(() => phase())
+  const [uploaded, setUploaded] = useState(() => Boolean(uploadedAt()))
   const [editingShotId, setEditingShotId] = useState(null)
   // Edit을 열 때의 값. 고친 값은 updateShot이 즉시 저장하므로, 무엇이
   // 달라졌는지는 이 스냅샷과 견줘야 알 수 있다. 그 차이를 생성에 함께
@@ -409,6 +418,27 @@ export default function App() {
   const updateShot = (shotId, update) => setScenes((current) => current.map((scene) => ({
     ...scene, shots: scene.shots.map((shot) => shot.id === shotId ? { ...shot, ...update } : shot),
   })))
+
+  /**
+   * 글자를 고친 것을 **한 건으로** 센다.
+   *
+   * textarea는 한 글자마다 onChange가 오므로 그대로 남기면 `설명 수정`
+   * 하나가 수백 건이 된다. 같은 샷의 같은 항목을 이어 고치는 동안은
+   * 한 번으로 묶고, 손을 뗀 뒤(1.2초)에 남긴다.
+   *
+   * 층위는 무엇을 고쳤는지에 따라 갈린다 — 설명·제목은 그 칸 안의 일이라
+   * `element`, 샷 크기·앵글은 그 컷을 어떻게 찍는가라 `shot`이다.
+   */
+  const editTimers = useRef({})
+  const logShotEdit = (shotId, field) => {
+    const level = (field === 'shotSize' || field === 'perspective') ? 'shot' : 'element'
+    const key = `${shotId}:${field}`
+    clearTimeout(editTimers.current[key])
+    editTimers.current[key] = setTimeout(() => {
+      logEdit({ level, target: shotId, action: field })
+      delete editTimers.current[key]
+    }, 1200)
+  }
   const createStoryboard = async () => {
     if (!story.trim()) { setNotice('대본을 입력해 주세요.'); return }
     if (story.trim() === EXAMPLE_STORY.trim()) {
@@ -451,21 +481,68 @@ export default function App() {
   const insertShot = (at) => {
     if (!activeScene) return
     const shot = { id: uid('shot'), title: '새 샷', description: '', shotSize: 'Medium Shot', perspective: 'Eye Level', image: null, inserted: true }
+    // 컷 수가 바뀌는 일이므로 `shot`. SceneLens 쪽 삽입·삭제와 같은
+    // 칸에 떨어져야 두 조건을 견줄 수 있다 (프로토콜 5.2).
+    logEdit({ level: 'shot', target: shot.id, action: 'insert' })
     updateScene(activeScene.id, { shots: [...activeScene.shots.slice(0, at), shot, ...activeScene.shots.slice(at)] })
     setActiveShotId(shot.id)
   }
   const deleteShot = (shotId) => {
     if (!activeScene || activeScene.shots.length <= 1) { setNotice('각 장면에는 샷 한 장 이상이 필요합니다.'); return }
+    logEdit({ level: 'shot', target: shotId, action: 'delete' })
     const index = activeScene.shots.findIndex((shot) => shot.id === shotId)
     const next = activeScene.shots.filter((shot) => shot.id !== shotId)
     updateScene(activeScene.id, { shots: next })
     if (activeShotId === shotId) setActiveShotId(next[Math.min(index, next.length - 1)].id)
   }
+  /**
+   * 세션을 내보낸다 — 파일과 서버 양쪽으로.
+   *
+   * 전에는 최종 산출물(story/scenes)만 보냈다. 그러면 무엇을 만들었는지는
+   * 남지만 **무엇을 했는지가 없어** 프로토콜 5.2의 조건 비교를 할 수 없다.
+   * 이제 행동 로그가 함께 나가고, 형식은 SceneLens 쪽과 같다.
+   */
   const exportData = async () => {
-    const payload = { schema_version: '2.0', exported_at: new Date().toISOString(), tool: 'baseline', story, scenes, art_style: artStyle }
-    const response = await fetch('/api/study/export', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tool: 'baseline', payload }) })
-    if (!response.ok) { setNotice('서버 저장에 실패했습니다.'); return }
-    setNotice('실험 데이터가 서버에 저장되었습니다.')
+    const finalSnapshot = {
+      captured_at: new Date().toISOString(),
+      story,
+      art_style: artStyle,
+      scenes: scenes.map((scene, sceneIndex) => ({
+        id: scene.id || `scene-${sceneIndex + 1}`,
+        title: scene.title || '',
+        shots: (scene.shots || []).map((shot, order) => ({
+          id: shot.id,
+          order: order + 1,
+          title: shot.title || '',
+          description: shot.description || '',
+          shotSize: shot.shotSize || '',
+          perspective: shot.perspective || '',
+          image: shot.image || null,
+        })),
+      })),
+    }
+    const payload = exportLog({ finalSnapshot })
+    try {
+      const response = await fetch('/api/study/export', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tool: 'baseline',
+          participant_id: payload.metadata.session_id,
+          condition: payload.metadata.condition,
+          payload,
+        }),
+      })
+      if (response.ok) {
+        markUploaded()
+        setUploaded(true)
+        setNotice('내보내기 완료 — 파일 저장됨, 서버에도 올라갔습니다.')
+        return
+      }
+      const detail = await response.text().catch(() => '')
+      setNotice(`파일은 저장됐지만 서버 업로드 실패 (${response.status}). ${detail.slice(0, 120)} — JSON 파일을 보관하세요.`)
+    } catch (error) {
+      setNotice(`파일은 저장됐지만 서버에 연결하지 못했습니다. ${String(error).slice(0, 100)} — JSON 파일을 보관하세요.`)
+    }
   }
   const generateCharacterReference = async (character) => {
     if (!character || !character.name || !character.name.trim()) {
@@ -606,6 +683,10 @@ export default function App() {
       })
       if (!response.ok) throw new Error('panel image unavailable')
       const data = await response.json()
+      // 재생성 의존도(프로토콜 5.2). 같은 패널을 두 번째 이상 그리면
+      // repeat — 그림을 다시 뽑는 것으로 문제를 푸는 쪽에 얼마나
+      // 기대는지가 이 값으로 보인다. `이미 그림이 있었나`로 가른다.
+      logEvent('panel_generate', { target: shot.id, repeat: Boolean(shot.image) })
       updateShot(shot.id, { image: `data:image/png;base64,${data.image}`, generatedStyle: artStyle, inserted: false })
       // 비교 대상은 이번 한 번에만 쓴다. 남겨 두면 다음 생성이 옛 값과
       // 견줘 바뀌지도 않은 항목을 `이것만 바꿔라`로 보낸다.
@@ -630,6 +711,64 @@ export default function App() {
   useEffect(() => {
     if (stage === 'panels' && activeScene) void generateSceneShots(activeScene)
   }, [stage])
+  // 실험 조건은 세션 시작 전에 정해져야 한다. SceneLens와 같은 방식으로
+  // 받는다 — 두 조건에서 조작이 다르면 실험자가 헷갈린다.
+  //   ?condition=baseline&order=1
+  //   Ctrl+Shift+C  조건·순서 입력
+  //   Ctrl+Shift+S  과제 시작·종료
+  //   Ctrl+Shift+E  내보내기
+  //   Ctrl+Shift+R  비우기
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const fromUrl = params.get('condition')
+    if (fromUrl) setCondition(fromUrl)
+    const orderFromUrl = params.get('order')
+    if (orderFromUrl) setConditionOrder(orderFromUrl)
+  }, [])
+
+  useEffect(() => {
+    const onKey = (event) => {
+      if (!event.ctrlKey || !event.shiftKey) return
+      if (event.key === 'C' || event.key === 'c') {
+        event.preventDefault()
+        const next = window.prompt('실험 조건 (baseline / scenelens)', condition())
+        if (next) setCondition(next)
+        const nextOrder = window.prompt('이 참가자의 몇 번째 조건인가 (1 / 2)', conditionOrder())
+        if (nextOrder) setConditionOrder(nextOrder)
+      }
+      if (event.key === 'S' || event.key === 's') {
+        event.preventDefault()
+        if (phase() === 'tutorial') {
+          startTask(); setStudyPhase(phase())
+          window.alert('본 과제를 시작했습니다. 여기부터 측정합니다.')
+        } else if (phase() === 'task') {
+          if (window.confirm('본 과제를 종료할까요? 이 뒤의 조작은 측정에서 빠집니다.')) {
+            endTask(); setStudyPhase(phase())
+          }
+        } else {
+          window.alert('이미 종료된 과제입니다. 다음 참가자는 Ctrl+Shift+R로 비우세요.')
+        }
+      }
+      if (event.key === 'E' || event.key === 'e') {
+        event.preventDefault()
+        exportData()
+      }
+      if (event.key === 'R' || event.key === 'r') {
+        event.preventDefault()
+        const { edits, regeneration } = summarize()
+        const ok = window.confirm(
+          (exportedAt()
+            ? `마지막 내보내기: ${new Date(exportedAt()).toLocaleString('ko-KR')}\n\n`
+            : '⚠️ 이 세션은 한 번도 내보내지 않았습니다.\n지우면 기록이 사라집니다.\n\n')
+          + `수정 ${edits.total}건, 생성 ${regeneration.total}건의 기록을 지웁니다. 계속할까요?`,
+        )
+        if (ok) { resetLog(); setStudyPhase(phase()); setUploaded(false) }
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  })
+
   const loadExample = () => {
     setStory(EXAMPLE_STORY); setScenes(EXAMPLE_SCENES); setStage('script')
     setCharacters(EXAMPLE_CHARACTERS)
@@ -638,7 +777,7 @@ export default function App() {
   }
 
   return <main className="app">
-    <header><div><p className="eyebrow">STORYBOARD EDITOR</p><h1>Storyboard</h1></div><div><button className="secondary" onClick={exportData} disabled={!scenes.length}>내보내기</button></div></header>
+    <header><div><p className="eyebrow">STORYBOARD EDITOR</p><h1>Storyboard</h1></div></header>
     <nav className="progress" aria-label="작업 단계"><span className={stage === 'script' ? 'current' : 'done'}>1. Idea</span><span className={stage === 'review' ? 'current' : ['setup', 'generating', 'characters', 'panels'].includes(stage) ? 'done' : ''}>2. Story</span><span className={['setup', 'generating', 'characters', 'panels'].includes(stage) ? 'current' : ''}>3. Storyboard</span></nav>
     {stage === 'script' && <section className="script-section"><label htmlFor="story">대본</label><textarea id="story" value={story} onChange={(e) => setStory(e.target.value)} placeholder="스토리를 입력하세요. 장소나 시간이 바뀌면 새 장면으로 나뉩니다." /><div className="script-actions"><span>{notice}</span><div><button className="secondary" onClick={loadExample}>예시 대본 불러오기</button> <button onClick={createStoryboard} disabled={busy}>{busy ? '나누는 중…' : '씬 구성 만들기'}</button></div></div></section>}
     {stage === 'review' && <section className="review-section"><div className="review-heading"><div><p className="eyebrow">STORY</p><h2>씬 구성 확인</h2><p>자동으로 나뉘고 보강된 장면입니다. 필요한 내용을 확인한 뒤 Panels로 넘어가세요.</p></div></div><div className="review-scenes">{scenes.map((scene, index) => <article className="review-scene" key={scene.id}><p>SCENE {index + 1}</p><input value={scene.title} aria-label={`장면 ${index + 1} 제목`} onChange={(event) => updateScene(scene.id, { title: event.target.value })} /><textarea value={scene.sourceText} aria-label={`장면 ${index + 1} 내용`} onChange={(event) => updateScene(scene.id, { sourceText: event.target.value })} /></article>)}</div><div className="flow-actions"><button className="secondary" onClick={() => setStage('script')}>이전</button><button onClick={() => setStage('setup')}>Storyboard 설정</button></div></section>}
@@ -751,7 +890,7 @@ export default function App() {
       <span className="placeholder-sub">하단 생성 버튼을 눌러보세요</span>
     </div>
   )}
-</div><div className="card-copy"><strong>Scene {scenes.indexOf(activeScene) + 1} | Shot {index + 1}</strong><textarea value={shot.description || ''} aria-label={`샷 ${index + 1} 설명`} onChange={(event) => updateShot(shot.id, { description: event.target.value })} /><MentionBadges shot={shot} characters={characters} /></div><footer><button className="edit-btn" onClick={() => openShotEditor(shot)}>Edit</button><button onClick={() => generateShot(shot)} disabled={panelPending[shot.id]}>{panelPending[shot.id] ? '생성 중…' : shot.image ? '다시 생성' : '생성'}</button><button className="delete" onClick={() => deleteShot(shot.id)}>삭제</button></footer>{index < activeScene.shots.length - 1 && <button className="insert-between" aria-label={`샷 ${index + 1} 뒤에 삽입`} onClick={() => insertShot(index + 1)}>＋</button>}</article>)}</div></section></section>}
+</div><div className="card-copy"><strong>Scene {scenes.indexOf(activeScene) + 1} | Shot {index + 1}</strong><textarea value={shot.description || ''} aria-label={`샷 ${index + 1} 설명`} onChange={(event) => { updateShot(shot.id, { description: event.target.value }); logShotEdit(shot.id, 'description') }} /><MentionBadges shot={shot} characters={characters} /></div><footer><button className="edit-btn" onClick={() => openShotEditor(shot)}>Edit</button><button onClick={() => generateShot(shot)} disabled={panelPending[shot.id]}>{panelPending[shot.id] ? '생성 중…' : shot.image ? '다시 생성' : '생성'}</button><button className="delete" onClick={() => deleteShot(shot.id)}>삭제</button></footer>{index < activeScene.shots.length - 1 && <button className="insert-between" aria-label={`샷 ${index + 1} 뒤에 삽입`} onClick={() => insertShot(index + 1)}>＋</button>}</article>)}</div></section></section>}
     
     {editingShotId && (() => {
       const editingShot = activeScene?.shots.find((s) => s.id === editingShotId)
@@ -771,14 +910,14 @@ export default function App() {
               <input
                 type="text"
                 value={editingShot.title || ''}
-                onChange={(e) => updateShot(editingShot.id, { title: e.target.value })}
+                onChange={(e) => { updateShot(editingShot.id, { title: e.target.value }); logShotEdit(editingShot.id, 'title') }}
               />
               <div className="modal-row">
                 <div className="modal-field">
                   <label>Size (샷 크기)</label>
                   <select
                     value={editingShot.shotSize || ''}
-                    onChange={(e) => updateShot(editingShot.id, { shotSize: e.target.value })}
+                    onChange={(e) => { updateShot(editingShot.id, { shotSize: e.target.value }); logShotEdit(editingShot.id, 'shotSize') }}
                   >
                     <option value="">미정</option>
                     <option value="Extreme Wide Shot">Extreme Wide Shot (EWS)</option>
@@ -794,7 +933,7 @@ export default function App() {
                   <label>Perspective (시점 / 앵글)</label>
                   <select
                     value={editingShot.perspective || ''}
-                    onChange={(e) => updateShot(editingShot.id, { perspective: e.target.value })}
+                    onChange={(e) => { updateShot(editingShot.id, { perspective: e.target.value }); logShotEdit(editingShot.id, 'perspective') }}
                   >
                     <option value="">미정</option>
                     <option value="Eye Level">Eye Level (아이 레벨)</option>
@@ -811,12 +950,12 @@ export default function App() {
               <textarea
                 rows={5}
                 value={editingShot.description || ''}
-                onChange={(e) => updateShot(editingShot.id, { description: e.target.value })}
+                onChange={(e) => { updateShot(editingShot.id, { description: e.target.value }); logShotEdit(editingShot.id, 'description') }}
               />
               <MentionBadges shot={editingShot} characters={characters} />
               {editingShot.image && (
                 <div className="modal-image-actions">
-                  <button className="delete" onClick={() => updateShot(editingShot.id, { image: null })}>이미지 제거</button>
+                  <button className="delete" onClick={() => { updateShot(editingShot.id, { image: null }); logEdit({ level: 'element', target: editingShot.id, action: 'remove_image' }) }}>이미지 제거</button>
                 </div>
               )}
             </div>
@@ -842,5 +981,54 @@ export default function App() {
         </div>
       )
     })()}
+
+    {/* 실험 진행 줄. SceneLens와 **같은 조작**을 둔다 — 참가자가 두
+        조건을 오가므로 여기서 다르면 그 차이 자체가 조건 간 차이로
+        섞인다. 측정값은 보여 주지 않는다. */}
+    <div className={`study-bar is-${studyPhase}`}>
+      {studyPhase === 'tutorial' && (
+        <button type="button" className="study-bar-start" onClick={() => {
+          startTask()
+          setStudyPhase(phase())
+        }}>
+          과제 시작
+        </button>
+      )}
+      {studyPhase === 'task' && (
+        <>
+          <span className="study-bar-state">진행 중</span>
+          <button type="button" className="study-bar-end" onClick={async () => {
+            if (!window.confirm('과제를 끝내고 결과를 내보낼까요?')) return
+            // 반드시 먼저 끝낸다 — 내보내기가 앞서면 그 순간까지가
+            // task로 잡혀 측정 구간의 끝이 흐려진다.
+            endTask()
+            setStudyPhase(phase())
+            await exportData()
+          }}>
+            과제 종료 · 내보내기
+          </button>
+        </>
+      )}
+      {studyPhase === 'done' && (
+        <button type="button" className="study-bar-export" onClick={exportData}>
+          결과 다시 내보내기
+        </button>
+      )}
+      {/* 서버 저장이 확인된 뒤에만. 파일은 실험자 컴퓨터에 있지만 그것이
+          제자리에 있는지 시스템은 알 수 없다. */}
+      {studyPhase === 'done' && uploaded && (
+        <button type="button" className="study-bar-next" onClick={() => {
+          if (!window.confirm(
+            '이 세션을 지우고 다음 참가자(또는 다음 조건)를 준비합니다.\n'
+            + '서버 저장은 확인됐습니다. 계속할까요?',
+          )) return
+          resetLog()
+          setStudyPhase(phase())
+          setUploaded(false)
+        }}>
+          다음 참가자 · 조건 준비
+        </button>
+      )}
+    </div>
   </main>
 }
