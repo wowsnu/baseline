@@ -263,7 +263,18 @@ function fromStructure(data, story) {
     const descriptions = (scene?.beats || []).flatMap((beat) => beat?.lines || []).filter((line) => line?.text)
     return {
       id: uid('scene'), title: scene?.heading || `장면 ${sceneIndex + 1}`,
-      sourceText: descriptions.map((line) => line.text).join(' ').replace(/\s+/g, ' ').trim() || story,
+      // 씬 구성 확인은 장면 단위 textarea 하나라 줄마다 대사를 붙일 자리가
+      // 없다. 행동 문장 뒤에 대사를 이어 붙여 여기서도 보이게 한다 —
+      // 나눈 결과를 확인하는 자리에 대사가 없으면 사라진 줄 안다.
+      // 패널 카드에는 `shot.dialogue`로 따로 표시된다.
+      sourceText: descriptions
+        .map((line) => (line.dialogue ? `${line.text} "${line.dialogue}"` : line.text))
+        .join(' ').replace(/\s+/g, ' ').trim() || story,
+      // 생성에 넘기는 장면 기준. 위와 같되 **대사를 뺀다.**
+      // `sourceText`는 shared로 이미지 모델까지 가는데, 거기에 따옴표 친
+      // 말이 섞이면 모델이 그 글자를 그리려 든다 — 말풍선이 나오던 경로다.
+      // 화면에는 대사를 보이고, 그림에는 안 보낸다.
+      visualText: descriptions.map((line) => line.text).join(' ').replace(/\s+/g, ' ').trim() || story,
       facts: factsFromHeading(scene?.heading),
       shots: (descriptions.length ? descriptions : [{ text: story, characters: [] }]).map((line, index) => ({
         // 대사는 그림 밖 텍스트로 둔다 — 콘티의 대사 칸과 같다. 그림에는
@@ -743,7 +754,9 @@ export default function App() {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           prompt,
-          shared: scene?.sourceText || scene?.title || '',
+          // 대사를 뺀 장면 기준을 보낸다. 사용자가 sourceText를 직접
+          // 고쳤으면 그 값에는 visualText가 없으므로 그때만 내려간다.
+          shared: scene?.visualText || scene?.sourceText || scene?.title || '',
           previous: previousPrompt,
           references,
           style: '', style_preset: artStyle, layout: '', changes, model: panelImageModel,
