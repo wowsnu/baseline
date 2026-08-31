@@ -22,6 +22,7 @@ const PHASE_KEY = 'scenelens.study.phase'
 const TASK_START_KEY = 'scenelens.study.task_started_at'
 const EXPORTED_KEY = 'scenelens.study.exported_at'
 const UPLOADED_KEY = 'scenelens.study.uploaded_at'
+const PARTICIPANT_KEY = 'scenelens.study.participant'
 
 /** 이 수정이 패널 안의 일인가, 그 너머인가. SceneLens와 같은 정의. */
 export const BEYOND_PANEL_LEVELS = ['shot', 'seam', 'sequence']
@@ -57,6 +58,16 @@ export const sessionId = () => {
   return id
 }
 
+/**
+ * 참가자 번호 (P01 …). 실험자가 정한다.
+ *
+ * 두 도구는 서로 다른 도메인이라 localStorage가 분리되고 세션 id도 따로
+ * 생긴다. 이 번호가 없으면 Supabase에서 같은 사람의 두 조건을 이을 수
+ * 없다 — within-subjects 분석이 그것을 필요로 한다.
+ */
+export const participantId = () => readJSON(PARTICIPANT_KEY, null) || ''
+export const setParticipantId = (value) => { writeJSON(PARTICIPANT_KEY, value); return value }
+
 export const condition = () => readJSON(CONDITION_KEY, null) || 'unset'
 export const setCondition = (value) => { writeJSON(CONDITION_KEY, value); return value }
 
@@ -80,6 +91,7 @@ export const logEvent = (type, payload = {}) => {
     id: `e${log.length + 1}`,
     t: Date.now(),
     session: sessionId(),
+    participant: participantId(),
     condition: condition(),
     conditionOrder: conditionOrder(),
     phase: phase(),
@@ -136,6 +148,7 @@ export const summarize = (fullLog = readLog()) => {
 
   return {
     session: sessionId(),
+    participant: participantId(),
     condition: condition(),
     conditionOrder: conditionOrder(),
     phase: phase(),
@@ -177,6 +190,7 @@ export const exportLog = ({ finalSnapshot = null, metadata = {} } = {}) => {
     exported_at: new Date().toISOString(),
     metadata: {
       session_id: sessionId(),
+      participant_id: participantId(),
       condition: condition(),
       condition_order: conditionOrder(),
       tool: 'baseline',
@@ -199,6 +213,9 @@ export const exportLog = ({ finalSnapshot = null, metadata = {} } = {}) => {
 
 export const resetLog = () => {
   try {
+    // 참가자 번호는 지우지 않는다. 같은 사람이 두 번째 조건을 이어서
+    // 하므로, 여기서 지우면 매번 다시 입력해야 하고 한 번 빠뜨리면 두
+    // 조건이 영영 안 이어진다. 사람이 바뀔 때 번호를 새로 입력한다.
     [STORAGE_KEY, SESSION_KEY, CONDITION_KEY, ORDER_KEY,
       PHASE_KEY, TASK_START_KEY, EXPORTED_KEY, UPLOADED_KEY]
       .forEach((key) => window.localStorage.removeItem(key))

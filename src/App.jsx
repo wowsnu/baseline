@@ -4,11 +4,13 @@ import {
   logEdit, logEvent, summarize, exportLog, resetLog,
   condition, setCondition, conditionOrder, setConditionOrder,
   phase, startTask, endTask, uploadedAt, markUploaded, exportedAt,
+  participantId, setParticipantId,
 } from './studyLog.js'
 import detailedStyle from './assets/style-anchors/lab-detailed-storyboard.png'
 import photorealStyle from './assets/style-anchors/lab-photoreal-previz.png'
 
 const STORAGE_KEY = 'scenelens-baseline-v1'
+const STORAGE_SCHEMA_VERSION = 2
 const uid = (prefix) => `${prefix}-${crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`}`
 
 function factsFromHeading(heading = '') {
@@ -301,19 +303,19 @@ function download(name, text, type) {
 }
 
 export default function App() {
-  const [story, setStory] = useState(EXAMPLE_STORY)
-  const [scenes, setScenes] = useState(EXAMPLE_SCENES)
+  const [story, setStory] = useState('')
+  const [scenes, setScenes] = useState([])
   // 생성은 await로 이어 달리는데, 그동안 클로저의 scenes는 시작 시점에
   // 멈춰 있다. 앞 샷을 방금 그렸어도 다음 샷이 그 그림을 이웃으로 물지
   // 못하므로, 항상 최신 값을 볼 수 있는 통로를 둔다.
   const scenesRef = useRef(scenes)
   scenesRef.current = scenes
-  const [activeSceneId, setActiveSceneId] = useState(EXAMPLE_SCENES[0].id)
-  const [activeShotId, setActiveShotId] = useState(EXAMPLE_SCENES[0].shots[0].id)
+  const [activeSceneId, setActiveSceneId] = useState(null)
+  const [activeShotId, setActiveShotId] = useState(null)
   const [stage, setStage] = useState('script')
   const [artStyle, setArtStyle] = useState('detailed')
   const [panelImageModel, setPanelImageModel] = useState('gpt-image-2')
-  const [characters, setCharacters] = useState(EXAMPLE_CHARACTERS)
+  const [characters, setCharacters] = useState([])
   const [characterPending, setCharacterPending] = useState({})
   const [panelPending, setPanelPending] = useState({})
   const [hydrated, setHydrated] = useState(false)
@@ -347,7 +349,11 @@ export default function App() {
   useEffect(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(STORAGE_KEY))
-      if (saved?.scenes && Array.isArray(saved.scenes) && saved.scenes.length > 0) {
+      const isLegacySeededExample = saved?.story?.trim() === EXAMPLE_STORY.trim()
+        && saved?.schemaVersion !== STORAGE_SCHEMA_VERSION
+      if (isLegacySeededExample) {
+        localStorage.removeItem(STORAGE_KEY)
+      } else if (saved?.scenes && Array.isArray(saved.scenes) && saved.scenes.length > 0) {
         setStory(saved.story || '')
         setScenes(saved.scenes.map((scene) => ({
           ...scene,
@@ -397,6 +403,7 @@ export default function App() {
         })),
       }))
       localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        schemaVersion: STORAGE_SCHEMA_VERSION,
         story,
         scenes: safeScenes,
         activeSceneId,
@@ -527,7 +534,7 @@ export default function App() {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           tool: 'baseline',
-          participant_id: payload.metadata.session_id,
+          participant_id: payload.metadata.participant_id || payload.metadata.session_id,
           condition: payload.metadata.condition,
           payload,
         }),
@@ -720,6 +727,9 @@ export default function App() {
   //   Ctrl+Shift+R  비우기
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
+    // 두 도구가 다른 도메인이라 이 번호가 두 조건을 잇는 유일한 값이다.
+    const participant = params.get('participant') || params.get('p')
+    if (participant) setParticipantId(participant)
     const fromUrl = params.get('condition')
     if (fromUrl) setCondition(fromUrl)
     const orderFromUrl = params.get('order')
@@ -731,6 +741,8 @@ export default function App() {
       if (!event.ctrlKey || !event.shiftKey) return
       if (event.key === 'C' || event.key === 'c') {
         event.preventDefault()
+        const who = window.prompt('참가자 번호 (예: P01)', participantId())
+        if (who) setParticipantId(who)
         const next = window.prompt('실험 조건 (baseline / scenelens)', condition())
         if (next) setCondition(next)
         const nextOrder = window.prompt('이 참가자의 몇 번째 조건인가 (1 / 2)', conditionOrder())
