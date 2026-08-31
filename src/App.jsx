@@ -576,6 +576,16 @@ export default function App() {
     }
   }
   const prepareStoryboard = async () => {
+    if (story.trim() === EXAMPLE_STORY.trim()) {
+      setScenes(EXAMPLE_SCENES)
+      setCharacters(EXAMPLE_CHARACTERS)
+      setActiveSceneId(EXAMPLE_SCENES[0].id)
+      setActiveShotId(EXAMPLE_SCENES[0].shots[0].id)
+      setBusy(false)
+      setStage('panels')
+      setNotice('예시 캐릭터와 패널을 불러왔습니다.')
+      return
+    }
     setStage('generating')
     const targets = (characters || []).filter((character) => character && character.name && character.name.trim())
     if (!targets.length) {
@@ -706,6 +716,10 @@ export default function App() {
     }
   }
   const generateSceneShots = async (targetScene) => {
+    if (story.trim() === EXAMPLE_STORY.trim()) {
+      setNotice('예시 패널이 이미 준비되어 있습니다.')
+      return
+    }
     const scene = targetScene || activeScene
     if (!scene?.shots) return
     const targetList = scene.shots.filter((shot) => shot && (!shot.image || shot.generatedStyle !== artStyle))
