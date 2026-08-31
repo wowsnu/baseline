@@ -359,11 +359,14 @@ export default function App() {
       try {
         const checkpoint = await readCheckpoint(BASELINE_CHECKPOINT_KEY)
         let saved = checkpoint?.state || JSON.parse(localStorage.getItem(STORAGE_KEY))
-        const isLegacySeededExample = !checkpoint
-          && saved?.story?.trim() === EXAMPLE_STORY.trim()
-          && saved?.schemaVersion !== STORAGE_SCHEMA_VERSION
-        if (isLegacySeededExample) {
+        // 예시는 버튼을 눌렀을 때만 보여야 한다. 크래시 복구가 이전 예시
+        // 세션을 되살리면 다음 접속부터 다시 기본값처럼 보이므로, 예시
+        // 체크포인트는 복구하지 않는다. 사용자가 쓴 대본과 생성 이미지만
+        // 복구 대상으로 남긴다.
+        const isSavedExample = saved?.story?.trim() === EXAMPLE_STORY.trim()
+        if (isSavedExample) {
           localStorage.removeItem(STORAGE_KEY)
+          await clearCheckpoints(BASELINE_CHECKPOINT_KEY)
           saved = null
         }
         if (!cancelled && saved) {
