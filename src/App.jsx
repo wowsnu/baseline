@@ -639,13 +639,16 @@ export default function App() {
   }
   const prepareStoryboard = async () => {
     if (story.trim() === EXAMPLE_STORY.trim()) {
+      // 예시도 다른 대본과 같은 단계를 거친다. 캐릭터 레퍼런스는 이미
+      // 붙어 있으므로 백엔드를 부르지 않을 뿐, 캐릭터 확인 단계는 건너뛰지
+      // 않는다 — 비교 조건 참가자도 같은 흐름을 봐야 한다.
       setScenes(EXAMPLE_SCENES)
       setCharacters(EXAMPLE_CHARACTERS)
       setActiveSceneId(EXAMPLE_SCENES[0].id)
       setActiveShotId(EXAMPLE_SCENES[0].shots[0].id)
       setBusy(false)
-      setStage('panels')
-      setNotice('예시 캐릭터와 패널을 불러왔습니다.')
+      setStage('characters')
+      setNotice('예시 캐릭터를 확인한 뒤 Panels로 넘어가세요.')
       return
     }
     setStage('generating')
