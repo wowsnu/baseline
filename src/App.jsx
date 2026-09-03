@@ -3,7 +3,7 @@ import { EXAMPLE_CHARACTERS, EXAMPLE_SCENES, EXAMPLE_STORY } from './exampleData
 import {
   logEdit, logEvent, summarize, exportLog, resetLog,
   condition, setCondition, conditionOrder, setConditionOrder,
-  phase, startTask, endTask, uploadedAt, markUploaded, exportedAt,
+  phase, startTask, endTask, markUploaded, exportedAt,
   participantId, setParticipantId,
 } from './studyLog.js'
 import {
@@ -344,7 +344,10 @@ export default function App() {
   // 실험 진행 상태. SceneLens와 같은 흐름을 쓴다 — 참가자가 두 조건을
   // 오가므로 조작이 다르면 그 자체가 조건 간 차이가 된다.
   const [studyPhase, setStudyPhase] = useState(() => phase())
-  const [uploaded, setUploaded] = useState(() => Boolean(uploadedAt()))
+  // 파일을 한 번이라도 내보냈는가. 참가자 기록은 다운로드되는 JSON
+  // 파일이 담당하고, 서버 업로드는 부가 경로다 — 그것이 실패해도
+  // 파일이 손에 있으면 다음 참가자로 넘어갈 수 있다.
+  const [exportedOnce, setExportedOnce] = useState(() => Boolean(exportedAt()))
   const [editingShotId, setEditingShotId] = useState(null)
   // Edit을 열 때의 값. 고친 값은 updateShot이 즉시 저장하므로, 무엇이
   // 달라졌는지는 이 스냅샷과 견줘야 알 수 있다. 그 차이를 생성에 함께
@@ -591,6 +594,7 @@ export default function App() {
       })),
     }
     const payload = exportLog({ finalSnapshot })
+    setExportedOnce(true)
     try {
       const response = await fetch('/api/study/export', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -603,7 +607,6 @@ export default function App() {
       })
       if (response.ok) {
         markUploaded()
-        setUploaded(true)
         setNotice('내보내기 완료 — 파일 저장됨, 서버에도 올라갔습니다.')
         return
       }
@@ -1111,17 +1114,17 @@ export default function App() {
           결과 다시 내보내기
         </button>
       )}
-      {/* 서버 저장이 확인된 뒤에만. 파일은 실험자 컴퓨터에 있지만 그것이
-          제자리에 있는지 시스템은 알 수 없다. */}
-      {studyPhase === 'done' && uploaded && (
+      {/* 파일을 한 번이라도 받은 뒤에만. 참가자 기록은 그 JSON 파일이다.
+          서버 업로드의 성공 여부는 묻지 않는다 — 부가 경로다. */}
+      {studyPhase === 'done' && exportedOnce && (
         <button type="button" className="study-bar-next" onClick={() => {
           if (!window.confirm(
             '이 세션을 지우고 다음 참가자(또는 다음 조건)를 준비합니다.\n'
-            + '서버 저장은 확인됐습니다. 계속할까요?',
+            + 'JSON 파일을 받아 두었는지 확인하세요. 계속할까요?',
           )) return
           resetLog()
           setStudyPhase(phase())
-          setUploaded(false)
+          setExportedOnce(false)
         }}>
           다음 참가자 · 조건 준비
         </button>
