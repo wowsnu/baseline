@@ -205,7 +205,9 @@ export const exportLog = ({ finalSnapshot = null, metadata = {} } = {}) => {
   const url = URL.createObjectURL(blob)
   const link = document.createElement('a')
   link.href = url
-  link.download = `baseline-${sessionId()}.json`
+  // 참가자가 다운로드 파일명으로 조건을 알아채지 않게 도구 이름을 빼고
+  // 중립 접두사만 쓴다. 조건 구분은 payload의 `tool` 필드로 한다.
+  link.download = `study-b-${sessionId()}.json`
   link.click()
   URL.revokeObjectURL(url)
   return payload
