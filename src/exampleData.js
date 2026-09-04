@@ -27,7 +27,7 @@ const shots = (scene, rows) => rows.map(([title, description, image], index) => 
 }))
 
 export const EXAMPLE_SCENES = [
-  { id: 'example-lab', title: '물리학과 실험실, 밤', sourceText: EXAMPLE_STORY.split('\n\n').slice(0, 2).join(' '), facts: { location: '물리학과 실험실', time: '밤' }, shots: shots('example-lab', [
+  { id: 'example-lab', title: '물리학과 실험실, 밤', sourceText: EXAMPLE_STORY.split('\n\n').slice(0, 2).join(' '), facts: { location: '물리학과 실험실', time: '밤' }, location: { name: '물리학과 실험실', description: '좁고 낡은 대학 실험실. 천장 형광등 하나만 살아 있어 실험대 한쪽에만 빛이 떨어진다. 오실로스코프와 뒤엉킨 케이블, 비커, 출력물이 실험대를 메우고 있다. 창밖에는 비.', image: labWide }, shots: shots('example-lab', [
     ['실험실 전경', '좁고 낡은 대학 실험실. 천장 형광등 하나만 살아 있어 긴 실험대 한쪽에만 빛이 떨어지고, 나머지 공간은 어둠에 잠겨 있다. 오실로스코프와 뒤엉킨 케이블, 비커, 쌓아 올린 출력물이 실험대를 가득 메우고 있다. 창밖에는 비가 내린다.', labWide],
     ['불빛 아래 하린', '하린, 20대 중반의 대학원생. 후드를 입고 머리를 묶은 채 불빛이 닿는 자리에 혼자 앉아 있다. 어두운 장비들 사이에서 그녀는 작아 보인다.', labBench],
     ['측정 그래프', '하린이 노트북 화면을 들여다본다. 화면에는 며칠째 같은 자리에서 어긋나는 측정 그래프가 떠 있다.', labOts],
@@ -44,7 +44,10 @@ export const EXAMPLE_SCENES = [
     ['비에 젖은 창', '그녀가 비에 젖은 창 앞에 선다. 유리 너머로 도시의 불빛들이 흩어져 있다. 노트를 든 손이 옆으로 내려간다.'],
     ['처음 보는 풍경', '하린이 창밖을 본다. 어제까지 보던 것과 같은 풍경이다. 그러나 그녀는 처음 보는 것처럼 서 있다.'],
   ]) },
-  { id: 'example-corridor', title: '연구동 복도, 밤', sourceText: EXAMPLE_STORY.split('\n\n')[2], facts: { location: '연구동 복도', time: '밤' }, shots: shots('example-corridor', [
+  // 복도 씬은 예시 자산에 그림이 없다. 장소 이름을 비워 두면 공간 확인
+  // 단계에서 이 씬은 레퍼런스를 요구하지 않는다 — 예시 흐름은 백엔드를
+  // 부르지 않아야 하므로. 실제 대본에서는 모든 씬이 공간 그림을 요구한다.
+  { id: 'example-corridor', title: '연구동 복도, 밤', sourceText: EXAMPLE_STORY.split('\n\n')[2], facts: { location: '연구동 복도', time: '밤' }, location: { name: '', description: '불이 반쯤 꺼진 연구동 복도. 한쪽 연구실 문틈으로 불빛이 새어 나온다.', image: null }, shots: shots('example-corridor', [
     ['복도 앞', '불이 반쯤 꺼진 복도. 하린이 노트를 든 채 걸어와 한 연구실 문 앞에 선다.'],
     ['멈춘 손', '문틈으로 불빛이 새어 나온다. 하린이 손을 들었다가 멈춘다.'],
     ['문을 두드리다', '하린이 노트를 내려다본다. 그리고 문을 두드린다.'],

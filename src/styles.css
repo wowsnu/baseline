@@ -34,6 +34,16 @@
   color: #15803d;
 }
 
+.study-bar-clear-tutorial {
+  border: 1px solid rgba(0, 0, 0, 0.16);
+  background: rgba(0, 0, 0, 0.03);
+  color: rgba(0, 0, 0, 0.55);
+}
+.study-bar-clear-tutorial:hover {
+  border-color: rgba(0, 0, 0, 0.3);
+  color: rgba(0, 0, 0, 0.8);
+}
+
 .study-bar-state {
   display: inline-flex;
   align-items: center;

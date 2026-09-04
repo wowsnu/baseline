@@ -276,6 +276,9 @@ function fromStructure(data, story) {
       // 화면에는 대사를 보이고, 그림에는 안 보낸다.
       visualText: descriptions.map((line) => line.text).join(' ').replace(/\s+/g, ' ').trim() || story,
       facts: factsFromHeading(scene?.heading),
+      // 공간 기준. 캐릭터와 대칭이다 — 이름·설명을 채우고 레퍼런스 그림을
+      // 만들면, 그 그림이 이 씬의 모든 패널에 참조로 물려 공간이 이어진다.
+      location: { name: factsFromHeading(scene?.heading).location || scene?.heading || '', description: '', image: null },
       shots: (descriptions.length ? descriptions : [{ text: story, characters: [] }]).map((line, index) => ({
         // 대사는 그림 밖 텍스트로 둔다 — 콘티의 대사 칸과 같다. 그림에는
         // 넣지 않으므로 생성 프롬프트(`description`)와는 따로 보관한다.
@@ -337,6 +340,7 @@ export default function App() {
   const [panelImageModel, setPanelImageModel] = useState('gpt-image-2')
   const [characters, setCharacters] = useState([])
   const [characterPending, setCharacterPending] = useState({})
+  const [locationPending, setLocationPending] = useState({})
   const [panelPending, setPanelPending] = useState({})
   const [hydrated, setHydrated] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -368,6 +372,11 @@ export default function App() {
   const requiredCharacters = (characters || []).filter((character) => character?.name?.trim())
   const referencesReady = requiredCharacters.every((character) => Boolean(character.image))
   const referencesPending = requiredCharacters.some((character) => characterPending[character.id])
+  // 공간도 캐릭터와 같은 규칙: 이름이 있는 씬은 레퍼런스 그림이 있어야
+  // Panels로 넘어간다. 이름이 비어 있으면(장소 미지정) 요구하지 않는다.
+  const requiredLocations = (scenes || []).filter((scene) => scene?.location?.name?.trim())
+  const locationsReady = requiredLocations.every((scene) => Boolean(scene.location.image))
+  const locationsPending = requiredLocations.some((scene) => locationPending[scene.id])
 
   useEffect(() => {
     let cancelled = false
@@ -388,6 +397,7 @@ export default function App() {
         if (!cancelled && saved) {
           const restoredScenes = Array.isArray(saved.scenes) ? saved.scenes.map((scene) => ({
             ...scene,
+            location: scene.location || { name: scene.facts?.location || scene.title || '', description: '', image: null },
             shots: (scene.shots || []).map((shot) => ({
               ...shot,
               shotSize: shot.shotSize || 'Medium Shot',
@@ -435,6 +445,11 @@ export default function App() {
       }))
       const safeScenes = (scenes || []).map((scene) => ({
         ...scene,
+        location: scene?.location ? {
+          name: scene.location.name || '',
+          description: scene.location.description || '',
+          image: (typeof scene.location.image === 'string' && !scene.location.image.startsWith('data:')) ? scene.location.image : null,
+        } : undefined,
         shots: (scene?.shots || []).map((shot) => ({
           ...shot,
           image: (typeof shot?.image === 'string' && !shot.image.startsWith('data:')) ? shot.image : null,
@@ -553,6 +568,29 @@ export default function App() {
     updateScene(activeScene.id, { shots: [...activeScene.shots.slice(0, at), shot, ...activeScene.shots.slice(at)] })
     setActiveShotId(shot.id)
   }
+  const addScene = () => {
+    const shot = { id: uid('shot'), title: '샷 1', description: '', dialogue: '', characters: [], shotSize: 'Medium Shot', perspective: 'Eye Level', image: null, inserted: true }
+    const scene = { id: uid('scene'), title: `장면 ${scenes.length + 1}`, sourceText: '', visualText: '', facts: {}, location: { name: '', description: '', image: null }, shots: [shot] }
+    // 씬 수가 바뀌는 일. SceneLens 쪽 sequence 조작과 같은 칸에 떨어져야
+    // 두 조건을 견줄 수 있다 (프로토콜 5.2).
+    logEdit({ level: 'sequence', target: scene.id, action: 'add-scene' })
+    setScenes((current) => [...current, scene])
+    setActiveSceneId(scene.id)
+    setActiveShotId(shot.id)
+  }
+  const deleteScene = (sceneId) => {
+    if (scenes.length <= 1) { setNotice('스토리보드에는 장면이 하나 이상 필요합니다.'); return }
+    if (!confirm('이 장면과 그 안의 모든 샷을 지웁니다. 계속할까요?')) return
+    logEdit({ level: 'sequence', target: sceneId, action: 'delete-scene' })
+    const index = scenes.findIndex((scene) => scene.id === sceneId)
+    const next = scenes.filter((scene) => scene.id !== sceneId)
+    setScenes(next)
+    if (activeSceneId === sceneId) {
+      const fallback = next[Math.min(index, next.length - 1)]
+      setActiveSceneId(fallback.id)
+      setActiveShotId(fallback.shots[0]?.id || null)
+    }
+  }
   const deleteShot = (shotId) => {
     if (!activeScene || activeScene.shots.length <= 1) { setNotice('각 장면에는 샷 한 장 이상이 필요합니다.'); return }
     logEdit({ level: 'shot', target: shotId, action: 'delete' })
@@ -640,6 +678,33 @@ export default function App() {
       setCharacterPending((current) => ({ ...current, [character.id]: false }))
     }
   }
+  const generateLocationReference = async (scene) => {
+    if (!scene?.location?.name?.trim()) {
+      setNotice('장소 이름을 입력해 주세요.')
+      return false
+    }
+    const parts = [scene.location.name, scene.location.description].filter((part) => part && part.trim())
+    const prompt = parts.join('. ') || `${scene.location.name}, 스토리보드의 한 장소`
+    setLocationPending((current) => ({ ...current, [scene.id]: true }))
+    try {
+      const response = await fetch('/api/reference-image', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: 'location', prompt, style: '', style_preset: artStyle, model: panelImageModel === 'flux-2-klein' ? 'gpt-image-1' : panelImageModel }),
+      })
+      if (!response.ok) throw new Error('reference image unavailable')
+      const data = await response.json()
+      setScenes((items) => items.map((item) => item.id === scene.id
+        ? { ...item, location: { ...item.location, image: `data:image/png;base64,${data.image}` } }
+        : item))
+      return true
+    } catch (err) {
+      console.error('generateLocationReference error:', err)
+      setNotice('공간 레퍼런스를 만들지 못했습니다. 백엔드 연결을 확인해 주세요.')
+      return false
+    } finally {
+      setLocationPending((current) => ({ ...current, [scene.id]: false }))
+    }
+  }
   const prepareStoryboard = async () => {
     if (story.trim() === EXAMPLE_STORY.trim()) {
       // 예시도 다른 대본과 같은 단계를 거친다. 캐릭터 레퍼런스는 이미
@@ -677,10 +742,38 @@ export default function App() {
       setBusy(false)
     }
   }
+  const enterLocations = async () => {
+    if (!referencesReady) {
+      setNotice('모든 캐릭터 레퍼런스가 준비된 뒤 다음 단계로 넘어갈 수 있습니다.')
+      setStage('characters')
+      return
+    }
+    setStage('locations')
+    // 예시 흐름에서는 공간 그림이 이미 붙어 있어 백엔드를 부르지 않는다.
+    const targets = (scenes || []).filter((scene) => scene?.location?.name?.trim() && !scene.location.image)
+    if (!targets.length) return
+    setBusy(true)
+    setNotice('공간 레퍼런스를 생성하고 있습니다…')
+    try {
+      let failed = false
+      for (const scene of targets) {
+        const success = await generateLocationReference(scene)
+        if (!success) failed = true
+      }
+      setNotice(failed ? '일부 공간 생성을 완료하지 못했습니다. 다시 생성할 수 있습니다.' : '공간 레퍼런스가 준비되었습니다. 확인해 주세요.')
+    } finally {
+      setBusy(false)
+    }
+  }
   const enterPanels = () => {
     if (!referencesReady) {
       setNotice('모든 캐릭터 레퍼런스가 준비된 뒤 Panels를 시작할 수 있습니다.')
       setStage('characters')
+      return
+    }
+    if (!locationsReady) {
+      setNotice('모든 공간 레퍼런스가 준비된 뒤 Panels를 시작할 수 있습니다.')
+      setStage('locations')
       return
     }
     setStage('panels')
@@ -743,6 +836,9 @@ export default function App() {
         // `나머지는 그대로`가 지킬 대상을 갖는다 — 글로만 유지하라고 하면
         // 무엇을 유지할지 알 수 없다.
         changes.length > 0 && shot.image && { name: '현재 패널', kind: 'current', image: shot.image },
+        // 이 장면의 공간 레퍼런스. 캐릭터와 같은 방식으로 참조로 물려,
+        // 컷마다 공간이 다르게 해석되지 않게 한다 (panel_image.py의 location 처리).
+        scene?.location?.image && { name: scene.location.name || '공간', kind: 'location', image: scene.location.image },
         ...referenceCharacters.map((character) => ({ name: character.name || '인물', kind: 'character', image: character.image })),
       ].filter(Boolean)
 
@@ -878,9 +974,9 @@ export default function App() {
 
   return <main className="app">
     <header><div><p className="eyebrow">STORYBOARD EDITOR</p><h1>Storyboard</h1></div></header>
-    <nav className="progress" aria-label="작업 단계"><span className={stage === 'script' ? 'current' : 'done'}>1. Idea</span><span className={stage === 'review' ? 'current' : ['setup', 'generating', 'characters', 'panels'].includes(stage) ? 'done' : ''}>2. Story</span><span className={['setup', 'generating', 'characters', 'panels'].includes(stage) ? 'current' : ''}>3. Storyboard</span></nav>
+    <nav className="progress" aria-label="작업 단계"><span className={stage === 'script' ? 'current' : 'done'}>1. Idea</span><span className={stage === 'review' ? 'current' : ['setup', 'generating', 'characters', 'locations', 'panels'].includes(stage) ? 'done' : ''}>2. Story</span><span className={['setup', 'generating', 'characters', 'locations', 'panels'].includes(stage) ? 'current' : ''}>3. Storyboard</span></nav>
     {stage === 'script' && <section className="script-section"><label htmlFor="story">시놉시스</label><p className="script-hint">이야기의 흐름을 짧게 적거나 붙여넣으세요. 완성된 대본이 아니라 시놉시스나 거친 메모여도 됩니다.</p><textarea id="story" value={story} onChange={(e) => setStory(e.target.value)} placeholder="시놉시스를 입력하세요. 장소나 시간이 바뀌면 새 장면으로 나뉩니다." /><div className="script-actions"><span>{notice}</span><div><button className="secondary" onClick={loadExample}>예시 시놉시스 불러오기</button> <button onClick={createStoryboard} disabled={busy}>{busy ? '나누는 중…' : '씬 구성 만들기'}</button></div></div></section>}
-    {stage === 'review' && <section className="review-section"><div className="review-heading"><div><p className="eyebrow">STORY</p><h2>씬 구성 확인</h2><p>자동으로 나뉘고 보강된 장면입니다. 필요한 내용을 확인한 뒤 Panels로 넘어가세요.</p></div></div><div className="review-scenes">{scenes.map((scene, index) => <article className="review-scene" key={scene.id}><p>SCENE {index + 1}</p><input value={scene.title} aria-label={`장면 ${index + 1} 제목`} onChange={(event) => updateScene(scene.id, { title: event.target.value })} /><textarea value={scene.sourceText} aria-label={`장면 ${index + 1} 내용`} onChange={(event) => updateScene(scene.id, { sourceText: event.target.value })} /></article>)}</div><div className="flow-actions"><button className="secondary" onClick={() => setStage('script')}>이전</button><button onClick={() => setStage('setup')}>Storyboard 설정</button></div></section>}
+    {stage === 'review' && <section className="review-section"><div className="review-heading"><div><p className="eyebrow">STORY</p><h2>씬 구성 확인</h2><p>자동으로 나뉘고 보강된 장면입니다. 필요한 내용을 확인한 뒤 Panels로 넘어가세요.</p></div></div><div className="review-scenes">{scenes.map((scene, index) => <article className="review-scene" key={scene.id}><p>SCENE {index + 1}{scenes.length > 1 && <button className="review-scene-del" aria-label={`장면 ${index + 1} 삭제`} onClick={() => deleteScene(scene.id)}>× 장면 삭제</button>}</p><input value={scene.title} aria-label={`장면 ${index + 1} 제목`} onChange={(event) => updateScene(scene.id, { title: event.target.value })} /><textarea value={scene.sourceText} aria-label={`장면 ${index + 1} 내용`} onChange={(event) => updateScene(scene.id, { sourceText: event.target.value })} /></article>)}<button className="review-scene-add" onClick={addScene}>＋ 장면 추가</button></div><div className="flow-actions"><button className="secondary" onClick={() => setStage('script')}>이전</button><button onClick={() => setStage('setup')}>Storyboard 설정</button></div></section>}
     {stage === 'setup' && <section className="setup-section"><div className="setup-heading"><p className="eyebrow">STORYBOARD</p><h2>그림체 선택</h2><p>스토리보드에 사용할 그림체와 이미지 모델을 선택하세요. 이후 Panels에서 바꿀 수 있습니다.</p></div><div className="style-options"><button className={artStyle === 'detailed' ? 'style-option selected' : 'style-option'} onClick={() => setArtStyle('detailed')}><img className="style-preview" src={detailedStyle} alt="디테일 스케치 예시" /><strong>디테일 스케치</strong><small>손으로 그린 스토리보드</small></button><button className={artStyle === 'photoreal' ? 'style-option selected' : 'style-option'} onClick={() => setArtStyle('photoreal')}><img className="style-preview" src={photorealStyle} alt="실사 프리비즈 예시" /><strong>실사 프리비즈</strong><small>현실적인 시네마틱 이미지</small></button></div><label className="baseline-model-picker" htmlFor="baseline-image-model"><span>이미지 모델</span><select id="baseline-image-model" value={panelImageModel} onChange={(event) => setPanelImageModel(event.target.value)}><option value="gpt-image-1">GPT Image 1</option><option value="gpt-image-2">GPT Image 2</option><option value="flux-2-klein">FLUX.2 Klein (빠름)</option></select></label><div className="setup-actions"><button className="secondary" onClick={() => setStage('review')}>이전</button><button onClick={prepareStoryboard}>스토리보드 생성</button></div></section>}
     {stage === 'generating' && <section className="generate-section"><p className="eyebrow">STORYBOARD</p><h2>스토리보드 준비</h2><p>{busy ? '캐릭터 레퍼런스를 생성하고 있습니다. 완료되면 바로 확인할 수 있습니다.' : '확인한 씬과 선택한 그림체를 바탕으로 Panels를 준비했습니다.'}</p><ul><li>✓ 씬 구성 정리</li><li>✓ 샷 카드 준비</li><li>✓ 그림체 설정 적용: {artStyle === 'detailed' ? '디테일 스케치' : '실사 프리비즈'}</li><li>{busy ? '… 캐릭터 레퍼런스 생성 중' : '✓ 캐릭터 레퍼런스 준비 완료'}</li></ul><div className="flow-actions"><button className="secondary" onClick={() => setStage('setup')}>이전</button><button onClick={() => setStage('characters')} disabled={busy}>캐릭터 확인</button></div></section>}
     {stage === 'characters' && (
@@ -963,15 +1059,88 @@ export default function App() {
         </div>
         <div className="flow-actions">
           <button className="secondary" onClick={() => setStage('generating')}>이전</button>
-          <button onClick={enterPanels} disabled={!referencesReady || referencesPending}>
-            {referencesPending ? '레퍼런스 생성 중…' : referencesReady ? 'Panels 보기' : '레퍼런스 준비 필요'}
+          <button onClick={enterLocations} disabled={!referencesReady || referencesPending}>
+            {referencesPending ? '레퍼런스 생성 중…' : referencesReady ? '장소 확인' : '레퍼런스 준비 필요'}
+          </button>
+        </div>
+      </section>
+    )}
+
+    {stage === 'locations' && (
+      <section className="character-section">
+        <div className="review-heading">
+          <div>
+            <p className="eyebrow">STORYBOARD</p>
+            <h2>공간 확인</h2>
+            <p>각 장면의 공간을 확인하고 필요하면 수정하세요. 만든 레퍼런스 그림이 그 장면의 모든 패널에 참조로 쓰입니다.</p>
+          </div>
+        </div>
+        <div className="character-grid">
+          {(scenes || []).map((scene, index) => scene && (
+            <article className="character-card" key={scene.id}>
+              <div
+                className={"character-image " + (scene.location?.image ? "has-image" : "empty") + (locationPending[scene.id] ? " is-pending" : "")}
+                onClick={() => scene.location?.image && setPreviewImage({ src: scene.location.image, name: scene.location.name || `장면 ${index + 1}` })}
+                role={scene.location?.image ? 'button' : undefined}
+                tabIndex={scene.location?.image ? 0 : undefined}
+                onKeyDown={(event) => {
+                  if (scene.location?.image && (event.key === 'Enter' || event.key === ' ')) {
+                    event.preventDefault()
+                    setPreviewImage({ src: scene.location.image, name: scene.location.name || `장면 ${index + 1}` })
+                  }
+                }}
+                aria-label={scene.location?.image ? `${scene.location.name || '공간'} 이미지 확대` : undefined}
+              >
+                {scene.location?.image ? (
+                  <img src={scene.location.image} alt={scene.location.name || '공간'} />
+                ) : locationPending[scene.id] ? (
+                  <div className="card-image-placeholder pending">
+                    <div className="image-spinner" />
+                    <span>공간 생성 중…</span>
+                  </div>
+                ) : (
+                  <div className="card-image-placeholder">
+                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M3 21h18M5 21V7l7-4 7 4v14M9 21v-6h6v6"/>
+                    </svg>
+                    <span className="placeholder-title">공간 이미지</span>
+                  </div>
+                )}
+              </div>
+              <input
+                value={scene.location?.name || ''}
+                aria-label={`장면 ${index + 1} 장소 이름`}
+                placeholder="장소 이름 (예: 물리학과 실험실)"
+                onChange={(event) => setScenes((items) => items.map((item) => item.id === scene.id ? { ...item, location: { ...item.location, name: event.target.value } } : item))}
+              />
+              <textarea
+                value={scene.location?.description || ''}
+                aria-label={`장면 ${index + 1} 공간 설명`}
+                placeholder="공간 설명 (예: 좁고 낡은 실험실, 형광등 하나, 창밖에 비)"
+                onChange={(event) => setScenes((items) => items.map((item) => item.id === scene.id ? { ...item, location: { ...item.location, description: event.target.value } } : item))}
+              />
+              <div className="character-action">
+                <button
+                  onClick={() => generateLocationReference(scene)}
+                  disabled={locationPending[scene.id] || !scene.location?.name?.trim()}
+                >
+                  {locationPending[scene.id] ? '생성 중…' : scene.location?.image ? '다시 생성' : '생성'}
+                </button>
+              </div>
+            </article>
+          ))}
+        </div>
+        <div className="flow-actions">
+          <button className="secondary" onClick={() => setStage('characters')}>이전</button>
+          <button onClick={enterPanels} disabled={!locationsReady || locationsPending}>
+            {locationsPending ? '레퍼런스 생성 중…' : locationsReady ? 'Panels 보기' : '레퍼런스 준비 필요'}
           </button>
         </div>
       </section>
     )}
 
     {previewImage && <div className="image-preview-overlay" onClick={() => setPreviewImage(null)} role="presentation"><div className="image-preview-dialog" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-label={`${previewImage.name} 이미지 확대`}><button className="image-preview-close" onClick={() => setPreviewImage(null)} aria-label="이미지 닫기">✕</button><img src={previewImage.src} alt={previewImage.name} /><p>{previewImage.name}</p></div></div>}
-    {stage === 'panels' && activeScene && <section className="board"><aside className="board-nav"><strong>▣ Storyboard</strong><button className="board-nav-active">▤ Panels</button><hr />{scenes.map((scene, index) => <button key={scene.id} className={scene.id === activeScene.id ? 'scene active' : 'scene'} onClick={() => { setActiveSceneId(scene.id); setActiveShotId(scene.shots[0]?.id || null) }}>Scene {index + 1}<small>{scene.title}</small></button>)}</aside><section className="board-main"><div className="board-title"><div><h2>{activeScene.title}</h2><span>{artStyle === 'detailed' ? '디테일 스케치' : '실사 프리비즈'}</span></div><button onClick={() => generateSceneShots(activeScene)} disabled={(activeScene.shots || []).some((shot) => panelPending[shot.id])}>{(activeScene.shots || []).some((shot) => panelPending[shot.id]) ? '생성 중…' : `Scene ${scenes.indexOf(activeScene) + 1} 생성`}</button></div><div className="card-grid">{(activeScene?.shots || []).map((shot, index) => shot && <article className="board-card" key={shot.id}><div className={"card-image " + (shot.image ? "has-image" : "empty") + (panelPending[shot.id] ? " is-pending" : "")}>
+    {stage === 'panels' && activeScene && <section className="board"><aside className="board-nav"><strong>▣ Storyboard</strong><button className="board-nav-active">▤ Panels</button><hr />{scenes.map((scene, index) => <div key={scene.id} className={scene.id === activeScene.id ? 'scene-row active' : 'scene-row'}><button className="scene" onClick={() => { setActiveSceneId(scene.id); setActiveShotId(scene.shots[0]?.id || null) }}>Scene {index + 1}<small>{scene.title}</small></button>{scenes.length > 1 && <button className="scene-del" aria-label={`장면 ${index + 1} 삭제`} title="이 장면 삭제" onClick={() => deleteScene(scene.id)}>×</button>}</div>)}<button className="scene-add" onClick={addScene}>＋ 씬 추가</button></aside><section className="board-main"><div className="board-title"><div><h2>{activeScene.title}</h2><span>{artStyle === 'detailed' ? '디테일 스케치' : '실사 프리비즈'}</span></div><button onClick={() => generateSceneShots(activeScene)} disabled={(activeScene.shots || []).some((shot) => panelPending[shot.id])}>{(activeScene.shots || []).some((shot) => panelPending[shot.id]) ? '생성 중…' : `Scene ${scenes.indexOf(activeScene) + 1} 생성`}</button></div><div className="card-grid">{(activeScene?.shots || []).map((shot, index) => shot && <article className="board-card" key={shot.id}><div className={"card-image " + (shot.image ? "has-image" : "empty") + (panelPending[shot.id] ? " is-pending" : "")}>
   {shot.image ? (
     <><img src={shot.image} alt={"Shot " + (index + 1)} />{panelPending[shot.id] && <div className="card-image-progress"><div className="image-spinner" /><span>AI 패널 다시 생성 중…</span></div>}</>
   ) : panelPending[shot.id] ? (
@@ -990,7 +1159,7 @@ export default function App() {
       <span className="placeholder-sub">하단 생성 버튼을 눌러보세요</span>
     </div>
   )}
-</div><div className="card-copy"><strong>Scene {scenes.indexOf(activeScene) + 1} | Shot {index + 1}</strong><textarea value={shot.description || ''} aria-label={`샷 ${index + 1} 설명`} onChange={(event) => { updateShot(shot.id, { description: event.target.value }); logShotEdit(shot.id, 'description') }} />{/* 대사는 그림 밖 텍스트로 둔다 — 콘티의 대사 칸과 같은 자리다. 생성 프롬프트는 `description`만 읽으므로 그림에는 들어가지 않는다. 읽기 전용으로 두면 설명을 고쳤을 때 대사가 옛 내용으로 남아 어긋난다. */}<input className="shot-dialogue-input" value={shot.dialogue || ''} aria-label={`샷 ${index + 1} 대사`} placeholder="대사 (그림에는 안 들어감)" onChange={(event) => { updateShot(shot.id, { dialogue: event.target.value }); logShotEdit(shot.id, 'dialogue') }} /><MentionBadges shot={shot} characters={characters} /></div><footer><button className="edit-btn" onClick={() => openShotEditor(shot)}>Edit</button><button onClick={() => generateShot(shot)} disabled={panelPending[shot.id]}>{panelPending[shot.id] ? '생성 중…' : shot.image ? '다시 생성' : '생성'}</button><button className="delete" onClick={() => deleteShot(shot.id)}>삭제</button></footer>{index < activeScene.shots.length - 1 && <button className="insert-between" aria-label={`샷 ${index + 1} 뒤에 삽입`} onClick={() => insertShot(index + 1)}>＋</button>}</article>)}</div></section></section>}
+</div><div className="card-copy"><strong>Scene {scenes.indexOf(activeScene) + 1} | Shot {index + 1}</strong><textarea value={shot.description || ''} aria-label={`샷 ${index + 1} 설명`} onChange={(event) => { updateShot(shot.id, { description: event.target.value }); logShotEdit(shot.id, 'description') }} />{/* 대사는 그림 밖 텍스트로 둔다 — 콘티의 대사 칸과 같은 자리다. 생성 프롬프트는 `description`만 읽으므로 그림에는 들어가지 않는다. 읽기 전용으로 두면 설명을 고쳤을 때 대사가 옛 내용으로 남아 어긋난다. */}<input className="shot-dialogue-input" value={shot.dialogue || ''} aria-label={`샷 ${index + 1} 대사`} placeholder="대사 (그림에는 안 들어감)" onChange={(event) => { updateShot(shot.id, { dialogue: event.target.value }); logShotEdit(shot.id, 'dialogue') }} /><MentionBadges shot={shot} characters={characters} /></div><footer><button className="edit-btn" onClick={() => openShotEditor(shot)}>Edit</button><button onClick={() => generateShot(shot)} disabled={panelPending[shot.id]}>{panelPending[shot.id] ? '생성 중…' : shot.image ? '다시 생성' : '생성'}</button><button className="delete" onClick={() => deleteShot(shot.id)}>삭제</button></footer>{index < activeScene.shots.length - 1 && <button className="insert-between" aria-label={`샷 ${index + 1} 뒤에 삽입`} onClick={() => insertShot(index + 1)}>＋</button>}</article>)}<button className="add-shot-end" onClick={() => insertShot(activeScene.shots.length)}>＋ 샷 추가</button></div></section></section>}
     
     {editingShotId && (() => {
       const editingShot = activeScene?.shots.find((s) => s.id === editingShotId)
@@ -1087,12 +1256,25 @@ export default function App() {
         섞인다. 측정값은 보여 주지 않는다. */}
     <div className={`study-bar is-${studyPhase}`}>
       {studyPhase === 'tutorial' && (
-        <button type="button" className="study-bar-start" onClick={() => {
-          startTask()
-          setStudyPhase(phase())
-        }}>
-          과제 시작
-        </button>
+        <>
+          {/* 튜토리얼에서 만든 스토리보드는 checkpoint에 남아 새로고침해도
+              그대로 온다. 본 과제를 빈 화면에서 시작하려면 그 상태만 지운다 —
+              로그·세션·조건은 튜토리얼 이벤트라 분석에 안 쓰이므로 건드리지
+              않는다. (SceneLens 쪽과 같은 버튼.) */}
+          <button type="button" className="study-bar-clear-tutorial" onClick={() => {
+            if (!window.confirm('튜토리얼에서 만든 스토리보드를 지우고 빈 화면으로 시작합니다. 계속할까요?')) return
+            pauseCheckpointing()
+            void clearCheckpoints(BASELINE_CHECKPOINT_KEY).finally(() => window.location.reload())
+          }}>
+            튜토리얼 비우기
+          </button>
+          <button type="button" className="study-bar-start" onClick={() => {
+            startTask()
+            setStudyPhase(phase())
+          }}>
+            과제 시작
+          </button>
+        </>
       )}
       {studyPhase === 'task' && (
         <>

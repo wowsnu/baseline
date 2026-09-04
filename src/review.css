@@ -14,6 +14,21 @@
 .review-facts input { width: 145px; padding: 7px; border: 1px solid #d8d5ca; border-radius: 4px; background: #fffefa; }
 .review-scene textarea { width: 100%; min-height: 150px; padding: 12px; border: 1px solid #d8d5ca; border-radius: 5px; background: #fffefa; line-height: 1.55; resize: vertical; }
 .review-scene input:focus, .review-scene textarea:focus { outline: 1px solid #77746c; }
+.review-scene > p { display: flex; align-items: center; gap: 12px; }
+.review-scene-del { border: 0; background: transparent; color: #9b3f36; font-size: 11px; font-weight: 700; letter-spacing: 0; padding: 2px 4px; }
+.review-scene-del:hover { text-decoration: underline; }
+.review-scene-add { margin-top: 20px; padding: 12px 16px; border: 1px dashed #aaa69a; border-radius: 6px; background: transparent; color: #4e4c44; font-weight: 600; }
+.review-scene-add:hover { border-color: #252620; color: #252620; }
+
+/* board-nav 씬 목록: 씬 버튼 + 삭제 × 를 한 줄에. */
+.scene-row { display: flex; align-items: stretch; gap: 2px; margin-bottom: 4px; border-radius: 6px; }
+.scene-row.active { background: #fffefa; box-shadow: 0 1px 5px #0001; }
+.scene-row .scene { flex: 1; margin: 0; padding: 10px 12px; }
+.scene-row .scene-del { flex: 0 0 auto; width: 28px; border: 0; background: transparent; color: #9b3f36; font-size: 15px; line-height: 1; opacity: 0; transition: opacity .12s; }
+.scene-row:hover .scene-del { opacity: 1; }
+.board-nav .scene-add { margin-top: 6px; padding: 9px 12px; border: 1px dashed #aaa69a; border-radius: 6px; background: transparent; color: #4e4c44; font-size: 13px; font-weight: 600; }
+.board-nav .scene-add:hover { border-color: #252620; color: #252620; }
+.board-nav .scene-row .scene-del { color: #9b3f36; }
 .script-section { min-height: 0; }
 .script-section > label { font-size: 18px; }
 .script-section textarea { height: 389px; min-height: 389px; }
@@ -67,6 +82,10 @@
 .card-image img { height: auto; object-fit: initial; }
 .insert-between { position: absolute; z-index: 2; top: 50%; right: -26px; width: 30px; height: 30px; padding: 0; transform: translateY(-50%); border: 1px solid #aaa69a; border-radius: 50%; background: #fffefa; color: #46443d; font-size: 20px; line-height: 1; box-shadow: 0 1px 4px #00000018; }
 .insert-between:hover { border-color: #252620; background: #252620; color: #fffefa; }
+/* 카드 사이 ＋는 마지막 샷 뒤를 가리키지 못한다(오른쪽에 카드가 없다).
+   그리드 끝의 이 버튼이 맨 뒤 삽입을 맡는다. */
+.add-shot-end { min-height: 180px; border: 1px dashed #aaa69a; border-radius: 8px; background: transparent; color: #77746c; font-size: 15px; font-weight: 600; cursor: pointer; }
+.add-shot-end:hover { border-color: #252620; color: #252620; }
 .board-card:nth-child(3n) .insert-between { top: auto; right: calc(50% - 15px); bottom: -15px; transform: none; }
 @media (max-width:900px) { .board-card:nth-child(3n) .insert-between { top: 50%; right: -26px; bottom: auto; transform: translateY(-50%); } .board-card:nth-child(2n) .insert-between { top: auto; right: calc(50% - 15px); bottom: -15px; transform: none; } }
 
