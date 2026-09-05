@@ -333,6 +333,9 @@ export default function App() {
   // 못하므로, 항상 최신 값을 볼 수 있는 통로를 둔다.
   const scenesRef = useRef(scenes)
   scenesRef.current = scenes
+  // Panels 진입 직후 effect가 다시 실행되더라도 동일한 씬 묶음을 두 번
+  // 생성하지 않는다. 자동 생성은 Scene 1부터 한 번의 큐로 끝까지 돈다.
+  const storyboardGenerationRunning = useRef(false)
   const [activeSceneId, setActiveSceneId] = useState(null)
   const [activeShotId, setActiveShotId] = useState(null)
   const [stage, setStage] = useState('script')
@@ -342,6 +345,9 @@ export default function App() {
   const [characterPending, setCharacterPending] = useState({})
   const [locationPending, setLocationPending] = useState({})
   const [panelPending, setPanelPending] = useState({})
+  // 새 AI 생성본이 기존 패널을 덮어써도 비교·복원이 가능하도록 컷별 최근
+  // 여섯 버전을 남긴다. 큰 base64 이미지를 무한히 쌓지 않기 위한 상한이다.
+  const [panelImageHistory, setPanelImageHistory] = useState({})
   const [hydrated, setHydrated] = useState(false)
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState('')
@@ -368,6 +374,9 @@ export default function App() {
     setEditingShotId(null)
   }
   const [previewImage, setPreviewImage] = useState(null)
+  // 예시 대본은 씬·샷·패널이 이미 다 채워져 있다. 이 흐름에서 씬 단위
+  // 생성 버튼은 누르면 "이미 준비되어 있습니다"만 뜨므로 감춘다.
+  const isExampleStory = story.trim() === EXAMPLE_STORY.trim()
   const activeScene = scenes.find((scene) => scene.id === activeSceneId) || scenes[0]
   const requiredCharacters = (characters || []).filter((character) => character?.name?.trim())
   const referencesReady = requiredCharacters.every((character) => Boolean(character.image))
@@ -493,12 +502,50 @@ export default function App() {
     }
   }, [story, scenes, activeSceneId, activeShotId, stage, artStyle, panelImageModel, characters, hydrated])
 
-  const updateScene = (sceneId, update) => setScenes((current) => current.map((scene) => (
-    scene.id === sceneId ? { ...scene, ...update } : scene
-  )))
-  const updateShot = (shotId, update) => setScenes((current) => current.map((scene) => ({
-    ...scene, shots: scene.shots.map((shot) => shot.id === shotId ? { ...shot, ...update } : shot),
-  })))
+  const updateScene = (sceneId, update) => setScenes((current) => {
+    const next = current.map((scene) => (scene.id === sceneId ? { ...scene, ...update } : scene))
+    scenesRef.current = next
+    return next
+  })
+  const updateShot = (shotId, update) => setScenes((current) => {
+    const next = current.map((scene) => ({
+      ...scene, shots: scene.shots.map((shot) => shot.id === shotId ? { ...shot, ...update } : shot),
+    }))
+    // 비동기 생성 큐가 다음 샷·다음 씬으로 넘어가기 전에 즉시 최신 그림을
+    // 읽게 한다. React 렌더를 기다리면 뒤 씬이 옛 스냅샷으로 판정될 수 있다.
+    scenesRef.current = next
+    return next
+  })
+  const recordPanelImageVersion = (shotId, image) => {
+    if (!shotId || !image) return
+    setPanelImageHistory((current) => {
+      const entries = current[shotId] || []
+      // 과거 그림으로 돌아간 뒤 새로 생성하는 경우, 그 뒤의 버전은 다른
+      // 가지다. 현재 지점까지만 남기고 새 결과를 이어 붙인다.
+      const currentIndex = entries.findIndex((entry) => entry.image === image)
+      const branch = currentIndex >= 0 ? entries.slice(0, currentIndex + 1) : entries
+      if (branch.at(-1)?.image === image) {
+        return branch.length === entries.length ? current : { ...current, [shotId]: branch }
+      }
+      return {
+        ...current,
+        [shotId]: [...branch, {
+          id: `panel-version-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          image,
+          createdAt: Date.now(),
+        }].slice(-6),
+      }
+    })
+  }
+  const restorePanelImageVersion = (shotId, versionId) => {
+    const versions = panelImageHistory[shotId] || []
+    const versionIndex = versions.findIndex((entry) => entry.id === versionId)
+    if (versionIndex < 0) return
+
+    const version = versions[versionIndex]
+    updateShot(shotId, { image: version.image, generatedStyle: artStyle, inserted: false })
+    logEvent('panel_restore', { target: shotId, version: versionIndex + 1 })
+  }
 
   /**
    * 글자를 고친 것을 **한 건으로** 센다.
@@ -799,7 +846,7 @@ export default function App() {
 
   const generateShot = async (target) => {
     const shotId = target?.id
-    if (!shotId) return
+    if (!shotId) return false
     // 넘겨받은 객체는 눌린 시점의 사본이다. 방금 Edit에서 고친 샷 크기·
     // 앵글·설명을 쓰려면 지금 상태에서 다시 읽어야 한다 — 사본을 그대로
     // 쓰면 고치고 바로 생성했을 때 옛 값으로 그려진다. 여러 샷을 이어
@@ -812,10 +859,13 @@ export default function App() {
     if (missingCharacters.length > 0) {
       setNotice(`${missingCharacters.map((character) => character.name).join(', ')} 레퍼런스를 먼저 생성해 주세요.`)
       setStage('characters')
-      return
+      return false
     }
     // 값 하나만 바꿔 다시 그리는가. Edit을 열 때의 값과 견준다.
     const changes = changesSince(editingShotBefore, shot)
+    // 첫 재생성에서도 바로 이전 패널을 보관해야, 새 생성본만 남고 비교할
+    // 대상이 사라지지 않는다.
+    if (shot.image) recordPanelImageVersion(shot.id, shot.image)
     setPanelPending((current) => ({ ...current, [shot.id]: true }))
     try {
       const scene = latestScene
@@ -870,13 +920,17 @@ export default function App() {
       // repeat — 그림을 다시 뽑는 것으로 문제를 푸는 쪽에 얼마나
       // 기대는지가 이 값으로 보인다. `이미 그림이 있었나`로 가른다.
       logEvent('panel_generate', { target: shot.id, repeat: Boolean(shot.image) })
-      updateShot(shot.id, { image: `data:image/png;base64,${data.image}`, generatedStyle: artStyle, inserted: false })
+      const image = `data:image/png;base64,${data.image}`
+      recordPanelImageVersion(shot.id, image)
+      updateShot(shot.id, { image, generatedStyle: artStyle, inserted: false })
       // 비교 대상은 이번 한 번에만 쓴다. 남겨 두면 다음 생성이 옛 값과
       // 견줘 바뀌지도 않은 항목을 `이것만 바꿔라`로 보낸다.
       if (editingShotBefore?.id === shot.id) setEditingShotBefore(null)
+      return true
     } catch (err) {
       console.error('generateShot error:', err)
       setNotice('패널 이미지를 만들지 못했습니다. 백엔드 연결을 확인해 주세요.')
+      return false
     } finally {
       setPanelPending((current) => ({ ...current, [shot.id]: false }))
     }
@@ -884,19 +938,52 @@ export default function App() {
   const generateSceneShots = async (targetScene) => {
     if (story.trim() === EXAMPLE_STORY.trim()) {
       setNotice('예시 패널이 이미 준비되어 있습니다.')
-      return
+      return { attempted: 0, succeeded: 0 }
     }
     const scene = targetScene || activeScene
-    if (!scene?.shots) return
+    if (!scene?.shots) return { attempted: 0, succeeded: 0 }
     const targetList = scene.shots.filter((shot) => shot && (!shot.image || shot.generatedStyle !== artStyle))
-    if (!targetList.length) return
+    if (!targetList.length) return { attempted: 0, succeeded: 0 }
     setNotice(targetList.length + '개 샷의 패널 생성을 시작합니다…')
+    let succeeded = 0
     for (const shot of targetList) {
-      await generateShot(shot)
+      if (await generateShot(shot)) succeeded += 1
     }
+    return { attempted: targetList.length, succeeded }
+  }
+  // Panels에 처음 들어갈 때는 현재 선택된 씬 하나가 아니라, 대본 순서대로
+  // 전 씬을 그린다. 마지막으로 편집한 Scene 3가 먼저 그려지면 앞 장면의
+  // 공간·인물 기준이 아직 없어서 스토리보드 흐름도 거꾸로 보인다.
+  const generateStoryboardScenes = async () => {
+    const orderedScenes = [...scenesRef.current]
+    let attempted = 0
+    let succeeded = 0
+    for (const scene of orderedScenes) {
+      const latestScene = scenesRef.current.find((entry) => entry.id === scene.id)
+      if (!latestScene?.shots?.length) continue
+      const hasTargets = latestScene.shots.some((shot) => (
+        shot && (!shot.image || shot.generatedStyle !== artStyle)
+      ))
+      if (!hasTargets) continue
+      setActiveSceneId(latestScene.id)
+      setActiveShotId(latestScene.shots[0]?.id || null)
+      setNotice(`Scene ${orderedScenes.indexOf(scene) + 1}/${orderedScenes.length} 패널을 생성하고 있습니다…`)
+      const result = await generateSceneShots(latestScene)
+      attempted += result.attempted
+      succeeded += result.succeeded
+    }
+    setNotice(attempted === succeeded
+      ? '모든 씬의 패널 생성을 마쳤습니다.'
+      : `${succeeded}/${attempted}개 패널을 생성했습니다. 비어 있는 샷은 다시 생성해 주세요.`)
   }
   useEffect(() => {
-    if (stage === 'panels' && activeScene) void generateSceneShots(activeScene)
+    if (stage !== 'panels') {
+      storyboardGenerationRunning.current = false
+      return
+    }
+    if (!scenes.length || storyboardGenerationRunning.current) return
+    storyboardGenerationRunning.current = true
+    void generateStoryboardScenes().finally(() => { storyboardGenerationRunning.current = false })
   }, [stage])
   // 실험 조건은 세션 시작 전에 정해져야 한다. SceneLens와 같은 방식으로
   // 받는다 — 두 조건에서 조작이 다르면 실험자가 헷갈린다.
@@ -1140,9 +1227,9 @@ export default function App() {
     )}
 
     {previewImage && <div className="image-preview-overlay" onClick={() => setPreviewImage(null)} role="presentation"><div className="image-preview-dialog" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-label={`${previewImage.name} 이미지 확대`}><button className="image-preview-close" onClick={() => setPreviewImage(null)} aria-label="이미지 닫기">✕</button><img src={previewImage.src} alt={previewImage.name} /><p>{previewImage.name}</p></div></div>}
-    {stage === 'panels' && activeScene && <section className="board"><aside className="board-nav"><strong>▣ Storyboard</strong><button className="board-nav-active">▤ Panels</button><hr />{scenes.map((scene, index) => <div key={scene.id} className={scene.id === activeScene.id ? 'scene-row active' : 'scene-row'}><button className="scene" onClick={() => { setActiveSceneId(scene.id); setActiveShotId(scene.shots[0]?.id || null) }}>Scene {index + 1}<small>{scene.title}</small></button>{scenes.length > 1 && <button className="scene-del" aria-label={`장면 ${index + 1} 삭제`} title="이 장면 삭제" onClick={() => deleteScene(scene.id)}>×</button>}</div>)}<button className="scene-add" onClick={addScene}>＋ 씬 추가</button></aside><section className="board-main"><div className="board-title"><div><h2>{activeScene.title}</h2><span>{artStyle === 'detailed' ? '디테일 스케치' : '실사 프리비즈'}</span></div><button onClick={() => generateSceneShots(activeScene)} disabled={(activeScene.shots || []).some((shot) => panelPending[shot.id])}>{(activeScene.shots || []).some((shot) => panelPending[shot.id]) ? '생성 중…' : `Scene ${scenes.indexOf(activeScene) + 1} 생성`}</button></div><div className="card-grid">{(activeScene?.shots || []).map((shot, index) => shot && <article className="board-card" key={shot.id}><div className={"card-image " + (shot.image ? "has-image" : "empty") + (panelPending[shot.id] ? " is-pending" : "")}>
+    {stage === 'panels' && activeScene && <section className="board"><aside className="board-nav"><strong>▣ Storyboard</strong><button className="board-nav-active">▤ Panels</button><hr />{scenes.map((scene, index) => <div key={scene.id} className={scene.id === activeScene.id ? 'scene-row active' : 'scene-row'}><button className="scene" onClick={() => { setActiveSceneId(scene.id); setActiveShotId(scene.shots[0]?.id || null) }}>Scene {index + 1}<small>{scene.title}</small></button>{scenes.length > 1 && <button className="scene-del" aria-label={`장면 ${index + 1} 삭제`} title="이 장면 삭제" onClick={() => deleteScene(scene.id)}>×</button>}</div>)}<button className="scene-add" onClick={addScene}>＋ 씬 추가</button></aside><section className="board-main"><div className="board-title"><div><h2>{activeScene.title}</h2><span>{artStyle === 'detailed' ? '디테일 스케치' : '실사 프리비즈'}</span></div>{!isExampleStory && <div className="board-title-actions"><button onClick={() => generateSceneShots(activeScene)} disabled={(activeScene.shots || []).some((shot) => panelPending[shot.id])}>{(activeScene.shots || []).some((shot) => panelPending[shot.id]) ? '생성 중…' : `Scene ${scenes.indexOf(activeScene) + 1} 생성`}</button></div>}</div><div className="card-grid">{(activeScene?.shots || []).map((shot, index) => shot && <article className="board-card" key={shot.id}><div className={"card-image " + (shot.image ? "has-image" : "empty") + (panelPending[shot.id] ? " is-pending" : "")}>
   {shot.image ? (
-    <><img src={shot.image} alt={"Shot " + (index + 1)} />{panelPending[shot.id] && <div className="card-image-progress"><div className="image-spinner" /><span>AI 패널 다시 생성 중…</span></div>}</>
+    <>{(() => { const versions = panelImageHistory[shot.id] || []; const currentIndex = versions.findIndex((version) => version.image === shot.image); const previousVersion = currentIndex > 0 ? versions[currentIndex - 1] : null; const nextVersion = currentIndex >= 0 && currentIndex < versions.length - 1 ? versions[currentIndex + 1] : null; return (previousVersion || nextVersion) && <div className="panel-history-nav">{previousVersion && <button type="button" onClick={() => restorePanelImageVersion(shot.id, previousVersion.id)} title="직전 AI 생성본으로 되돌리기">↶ 이전</button>}{nextVersion && <button type="button" onClick={() => restorePanelImageVersion(shot.id, nextVersion.id)} title="다음 AI 생성본으로 돌아가기">다음 ↷</button>}</div> })()}<img src={shot.image} alt={"Shot " + (index + 1)} />{panelPending[shot.id] && <div className="card-image-progress"><div className="image-spinner" /><span>AI 패널 다시 생성 중…</span></div>}</>
   ) : panelPending[shot.id] ? (
     <div className="card-image-placeholder pending">
       <div className="image-spinner" />
@@ -1159,7 +1246,7 @@ export default function App() {
       <span className="placeholder-sub">하단 생성 버튼을 눌러보세요</span>
     </div>
   )}
-</div><div className="card-copy"><strong>Scene {scenes.indexOf(activeScene) + 1} | Shot {index + 1}</strong><textarea value={shot.description || ''} aria-label={`샷 ${index + 1} 설명`} onChange={(event) => { updateShot(shot.id, { description: event.target.value }); logShotEdit(shot.id, 'description') }} />{/* 대사는 그림 밖 텍스트로 둔다 — 콘티의 대사 칸과 같은 자리다. 생성 프롬프트는 `description`만 읽으므로 그림에는 들어가지 않는다. 읽기 전용으로 두면 설명을 고쳤을 때 대사가 옛 내용으로 남아 어긋난다. */}<input className="shot-dialogue-input" value={shot.dialogue || ''} aria-label={`샷 ${index + 1} 대사`} placeholder="대사 (그림에는 안 들어감)" onChange={(event) => { updateShot(shot.id, { dialogue: event.target.value }); logShotEdit(shot.id, 'dialogue') }} /><MentionBadges shot={shot} characters={characters} /></div><footer><button className="edit-btn" onClick={() => openShotEditor(shot)}>Edit</button><button onClick={() => generateShot(shot)} disabled={panelPending[shot.id]}>{panelPending[shot.id] ? '생성 중…' : shot.image ? '다시 생성' : '생성'}</button><button className="delete" onClick={() => deleteShot(shot.id)}>삭제</button></footer>{index < activeScene.shots.length - 1 && <button className="insert-between" aria-label={`샷 ${index + 1} 뒤에 삽입`} onClick={() => insertShot(index + 1)}>＋</button>}</article>)}<button className="add-shot-end" onClick={() => insertShot(activeScene.shots.length)}>＋ 샷 추가</button></div></section></section>}
+</div><div className="card-copy"><strong>Scene {scenes.indexOf(activeScene) + 1} | Shot {index + 1}</strong><textarea value={shot.description || ''} aria-label={`샷 ${index + 1} 설명`} onChange={(event) => { updateShot(shot.id, { description: event.target.value }); logShotEdit(shot.id, 'description') }} />{/* 대사는 그림 밖 텍스트로 둔다 — 콘티의 대사 칸과 같은 자리다. 생성 프롬프트는 `description`만 읽으므로 그림에는 안 들어간다. 읽기 전용으로 두면 설명을 고쳤을 때 대사가 옛 내용으로 남아 어긋난다. */}<input className="shot-dialogue-input" value={shot.dialogue || ''} aria-label={`샷 ${index + 1} 대사`} placeholder="대사 (그림에는 안 들어감)" onChange={(event) => { updateShot(shot.id, { dialogue: event.target.value }); logShotEdit(shot.id, 'dialogue') }} /><MentionBadges shot={shot} characters={characters} /></div><footer><button className="edit-btn" onClick={() => openShotEditor(shot)}>Edit</button><button onClick={() => generateShot(shot)} disabled={panelPending[shot.id]}>{panelPending[shot.id] ? '생성 중…' : shot.image ? '다시 생성' : '생성'}</button><button className="delete" onClick={() => deleteShot(shot.id)}>삭제</button></footer>{index === 0 && <button className="insert-before-first" aria-label="첫 샷 앞에 삽입" onClick={() => insertShot(0)}>＋</button>}{index < activeScene.shots.length - 1 && <button className="insert-between" aria-label={`샷 ${index + 1} 뒤에 삽입`} onClick={() => insertShot(index + 1)}>＋</button>}</article>)}<button className="add-shot-end" onClick={() => insertShot(activeScene.shots.length)}>＋ 샷 추가</button></div></section></section>}
     
     {editingShotId && (() => {
       const editingShot = activeScene?.shots.find((s) => s.id === editingShotId)
@@ -1222,29 +1309,20 @@ export default function App() {
                 onChange={(e) => { updateShot(editingShot.id, { description: e.target.value }); logShotEdit(editingShot.id, 'description') }}
               />
               <MentionBadges shot={editingShot} characters={characters} />
-              {editingShot.image && (
-                <div className="modal-image-actions">
-                  <button className="delete" onClick={() => { updateShot(editingShot.id, { image: null }); logEdit({ level: 'element', target: editingShot.id, action: 'remove_image' }) }}>이미지 제거</button>
-                </div>
-              )}
+              <div className="modal-image-actions">
+                <button
+                  className="modal-generate-inline"
+                  disabled={panelPending[editingShot.id]}
+                  onClick={() => generateShot(editingShot)}
+                >
+                  {panelPending[editingShot.id]
+                    ? '생성 중…'
+                    : editingShot.image ? '이 설정으로 다시 생성' : '이 설정으로 생성'}
+                </button>
+              </div>
             </div>
-            {/* `완료`는 고친 값을 저장만 한다(이미 updateShot이 즉시 반영).
-                고친 값으로 그림까지 보려면 여기서 바로 다시 그린다 — 모달을
-                닫고 카드에서 그 샷을 다시 찾게 하지 않는다. 진행 상태는
-                카드의 pending 표시가 함께 맡는다. */}
             <div className="modal-footer">
               <button className="secondary" onClick={() => closeShotEditor()}>완료</button>
-              <button
-                disabled={panelPending[editingShot.id]}
-                onClick={() => {
-                  setEditingShotId(null)
-                  generateShot(editingShot)
-                }}
-              >
-                {panelPending[editingShot.id]
-                  ? '생성 중…'
-                  : editingShot.image ? '이 설정으로 다시 생성' : '이 설정으로 생성'}
-              </button>
             </div>
           </div>
         </div>

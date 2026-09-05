@@ -82,6 +82,8 @@
 .card-image img { height: auto; object-fit: initial; }
 .insert-between { position: absolute; z-index: 2; top: 50%; right: -26px; width: 30px; height: 30px; padding: 0; transform: translateY(-50%); border: 1px solid #aaa69a; border-radius: 50%; background: #fffefa; color: #46443d; font-size: 20px; line-height: 1; box-shadow: 0 1px 4px #00000018; }
 .insert-between:hover { border-color: #252620; background: #252620; color: #fffefa; }
+.insert-before-first { position: absolute; z-index: 2; top: 50%; left: -26px; width: 30px; height: 30px; padding: 0; transform: translateY(-50%); border: 1px solid #aaa69a; border-radius: 50%; background: #fffefa; color: #46443d; font-size: 20px; line-height: 1; box-shadow: 0 1px 4px #00000018; }
+.insert-before-first:hover { border-color: #252620; background: #252620; color: #fffefa; }
 /* 카드 사이 ＋는 마지막 샷 뒤를 가리키지 못한다(오른쪽에 카드가 없다).
    그리드 끝의 이 버튼이 맨 뒤 삽입을 맡는다. */
 .add-shot-end { min-height: 180px; border: 1px dashed #aaa69a; border-radius: 8px; background: transparent; color: #77746c; font-size: 15px; font-weight: 600; cursor: pointer; }
@@ -110,6 +112,7 @@
   background: #ffffff;
   width: 500px;
   max-width: 90vw;
+  max-height: calc(100dvh - 32px);
   border-radius: 10px;
   box-shadow: 0 10px 25px rgba(0,0,0,0.2);
   display: flex;
@@ -133,6 +136,8 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .modal-body label { font-weight: 600; font-size: 14px; color: #333; }
@@ -185,6 +190,22 @@
   margin-top: 10px;
 }
 
+.modal-generate-inline {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid #252620;
+  border-radius: 6px;
+  background: #252620;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.modal-generate-inline:disabled {
+  cursor: wait;
+  opacity: .62;
+}
+
 .modal-footer {
   padding: 14px 20px;
   background: #f9f9f9;
@@ -192,6 +213,12 @@
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+  flex: 0 0 auto;
+}
+
+@media (max-height: 760px) {
+  .modal-body { padding: 14px 20px; }
+  .modal-panel-preview img { max-height: 150px; }
 }
 
 .modal-row {
@@ -463,3 +490,9 @@ header .secondary:hover:not(:disabled),
   font-weight: 600;
   opacity: 0.75;
 }
+
+.board-title-actions { display:flex; gap:8px; align-items:center; }
+.panel-history-nav { position:absolute; z-index:3; top:9px; right:9px; display:flex; overflow:hidden; border:1px solid rgb(255 255 255 / 60%); border-radius:5px; box-shadow:0 1px 4px #0005; }
+.panel-history-nav button { min-height:30px; padding:5px 9px; border:0; border-right:1px solid rgb(255 255 255 / 26%); background:rgb(30 31 27 / 82%); color:#fff; font-size:12px; font-weight:700; cursor:pointer; }
+.panel-history-nav button:last-child { border-right:0; }
+.panel-history-nav button:hover { background:#252620; }
